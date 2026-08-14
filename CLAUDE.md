@@ -57,6 +57,26 @@ app change — the old link would keep serving the old bug. Data is different:
 `data/` is fetched at runtime from `main`, so a rebuilt table reaches an
 already-published Snack on its own and only app changes need a republish.
 
+## Web edition
+
+The app also exists as a single-file web page, published as a Claude Artifact —
+the Expo-independent fallback for when Expo Go or Snack is broken, and a
+first-class way to use it on a desktop:
+
+```
+https://claude.ai/code/artifact/b0309d40-75ba-4dd8-83ec-9953aed70963
+```
+
+`web/index.template.html` is the app (a hand-ported mirror of `app/src`, same
+theme, same model code) and `scripts/build_web.py` folds `data/` into it. The
+artifact's CSP blocks every external request, so the page cannot fetch from
+GitHub the way the Snack does — the data is baked in at build time, and logos
+are letter tiles. That means a data refresh does NOT reach this page on its
+own: rebuild with `python3 scripts/build_web.py`, then republish the artifact
+**to the same URL** (pass the URL above as `url` when publishing from a new
+session; republishing the same file path within a session updates in place).
+Changes to `app/src` that touch model logic belong in the template too.
+
 ## Merge authority
 
 Merging is delegated — do not ask. Open the PR, merge it, and report the outcome.
@@ -152,6 +172,8 @@ phone.
 | `scripts/bundle_snack.sh` | Folds `app/` into `app/snack/App.js` |
 | `scripts/publish_snack.py` | Saves that bundle as a Snack, prints the tap link |
 | `scripts/make_snack_url.py` | Multi-file Snack link, for editing the modular project |
+| `scripts/build_web.py` | Folds `data/` into the web edition's template |
+| `web/index.template.html` | The web edition — a hand-ported mirror of `app/src` |
 | `app/src/` | The real app — **edit here** |
 | `app/snack/App.js` | Generated bundle — never edit |
 | `data/index.json` | The list of universes — the first file the app reads |
