@@ -18,8 +18,8 @@ account anywhere in the loop.
 
 | Path | What it is |
 | --- | --- |
-| `scripts/build_snapshot.py` | The whole pipeline: universe, prices, metrics, validation, write |
-| `scripts/remetric.py` | Replays changed formulas over the committed history, no refetch |
+| `scripts/build_snapshot.py` | The whole pipeline: universe, prices, benchmarks, metrics, validation, write |
+| `scripts/remetric.py` | Replays changed formulas over the committed history; `--fetch-benchmarks` refreshes the factor series |
 | `scripts/fetch_logos.py` | Caches every company logo into `web/logos.json` |
 | `scripts/build_web.py` | Folds `data/` and the logos into one self-contained page |
 | `web/index.template.html` | The app itself — edit here |
@@ -105,84 +105,55 @@ honouring `Retry-After`, and the run refuses to publish if any of the largest
 silent rate-limit once dropped `VZ`, `SCHW`, `BLK`, `BA`, `DIS`, `NEE` and `UNP`
 from the table without failing the build.
 
+**Downloads benchmarks.** The same fetch again for thirteen funds: `VTI` as
+the whole-market factor and one SPDR fund per sector (`XLK`, `XLV`, `XLF`,
+`XLY`, `XLP`, `XLE`, `XLI`, `XLB`, `XLU`, `XLRE`, `XLC`), aligned to the same
+shared calendar and published under each table's `benchmarks` key. They are
+funds, not companies, so they never appear as rows -- they exist because the
+app's scoring regresses against them.
+
 **Computes metrics.** Returns over 1W/1M/3M/6M/YTD/1Y/2Y, annualised
-volatility over 30d/90d/1Y, 1-year max drawdown, and momentum.
+volatility over 30d/90d/1Y, and 1-year max drawdown.
 
 Every return window runs to the last close. A "3 month return" is the plain move
-over three months, so it can be checked against any other source, and the
-skipping that momentum needs lives inside momentum rather than being spread
-across the whole table.
+over three months, so it can be checked against any other source.
 
-**Momentum (`mom`)** scores eleven blocks of 21 trading days one at a time and
-adds the results. For each block: average every daily log return inside it, then
-divide by the daily volatility of the 63 sessions ending at that block's last
-close.
+**Momentum is deliberately not computed here.** The score is built by the app
+at view time, because every part of its formula is a control the reader can
+change -- and a score frozen at build time could only ever answer one
+configuration. The formula system:
 
-```
-                11
-mom  =         SUM   mean daily log return(block b)
-              b = 1  ───────────────────────────────
-                     daily volatility(63 sessions to end of block b)
-```
+| Setting | Meaning | Default |
+| --- | --- | --- |
+| Lookback | 63 / 126 / 189 / 252 trading days | 252 and 126, blended |
+| Skip | exclude the most recent round(lookback/12) sessions: 5 / 10 / 16 / 21 | on |
+| Volatility adjust | divide the window's mean daily log return by its own daily volatility | on |
+| Market residual | regress on VTI over the 504 sessions ending at the window's cutoff; score return − β·VTI | on |
+| Sector residual | regress on VTI + the sector's SPDR fund together; score what neither explains | off |
+| Blend | score two windows independently, combine the raw scores 50/50 | on |
 
-The blocks roll with the as-of date rather than snapping to calendar months. The
-most recent 21 trading days are skipped, and the 231 before them divide into the
-eleven blocks -- 252 sessions in all, so the measure spans a year ending a month
-back. That is twelve-minus-one counted in sessions.
-
-Counting in sessions keeps the cutoff a fixed month behind the last close every
-day of the year. Waiting for the calendar to turn instead would mean that by the
-end of a month the score is blind to nearly two, with the skip breathing between
-one month and two depending on when the pipeline happened to run.
-
-Each table records its blocks and the last session the score covers in
-`mom.through`, and the app greys everything after it. The month labels the app
-puts under the bars are only where each block happens to end.
-
-Volatility spans 63 sessions rather than the block itself because 21 returns are
-far too few for a stable estimate when it sits in the denominator of every term.
-
-Both halves of each term are daily quantities, so a monthly score is a unitless
-daily Sharpe and the sum needs no annualising. Annualising both halves only
-multiplies the result by a constant -- for the record, sqrt(252) -- which
-changes no ordering at all.
-
-Summing eleven terms rather than measuring one long window is what makes this a
-consistency measure. A company that climbed steadily all year scores in every
-term; one that doubled in a fortnight and drifted for ten blocks collects once
-and contributes nothing across the rest. Values run about -2 to +3.
-
-All eleven blocks or nothing: a sum over whichever blocks happened to exist
-would give a younger company a smaller number rather than a worse one, which is
-not a ranking. Block boundaries come from the shared calendar as dates, so every
-company in a table is scored over exactly the same stretches of trading.
-
-**BLEND (`blend`)** asks the same question over two long windows instead of
-eleven short ones: twelve months minus one (250 sessions, skipping 20) and six
-minus one (125, skipping 10). Each is a mean daily log return over the daily
-volatility of that same stretch, multiplied by sqrt(252), and the two are
-averaged.
+So the default score is
 
 ```
-blend  =  mean of, over each window w:
+0.5 · score(12M, skip 21)  +  0.5 · score(6M, skip 10)
 
-              mean daily log return(w)
-              ────────────────────────  x  sqrt(252)
-              daily volatility(w)
+where score(w) = mean daily residual log return(w) / daily volatility of those residuals(w)
+      residual = stock return − β·VTI,  β estimated over the 504 sessions ending at w's cutoff
 ```
 
-The sqrt(252) is exactly what annualising both halves of the ratio amounts to --
-the return scales by 252 and the volatility by its root -- so it is a constant
-that reorders nothing, applied because the numbers read more naturally with it.
+Windows are counted in trading days from the as-of date rather than snapped to
+calendar months, which keeps the skip a fixed stretch behind the last close
+every day of the year. Nothing is annualised: a constant sqrt(252) reorders
+nothing, and annualising one half of a ratio inflates exactly the most extreme
+names.
 
-MOM and BLEND disagree, which is the point of publishing both. MOM adds eleven
-separately-scored blocks, so a company has to keep earning across the year;
-BLEND measures each long window in one piece, so one decisive run can carry it.
-Sorting by each in turn shows which kind of year a company had.
-
-A window only produces a number when it is genuinely filled. A company that
-listed six weeks ago reports a 30-day volatility and a null 1-year one, rather
-than passing six weeks of noise off as a year.
+A window is all-or-nothing -- a company must have traded every session of it,
+and carry at least 252 sessions of paired history when a residual toggle needs
+a beta -- otherwise it scores nothing. A partial window would hand a younger
+company a different question, not a worse answer. The same discipline applies
+to the plain windows: a company that listed six weeks ago reports a 30-day
+volatility and a null 1-year one, rather than passing six weeks of noise off
+as a year.
 
 **Validates.** Roughly a dozen checks per table: size, duplicate symbols,
 surviving duplicate CIKs, non-positive prices or caps, implausible daily moves,
@@ -220,7 +191,7 @@ previous snapshot left untouched                     exit 1, files unchanged
 | `MIN_MARKET_CAP` | `250000000` | Screen floor |
 | `MIN_DOLLAR_VOLUME` | `3000000` | Average daily traded value floor |
 | `CANDIDATE_POOL` | `4000` | How many names the screener is asked for |
-| `HISTORY_DAYS` | `850` | Calendar days requested; must cover the longest window plus its skip |
+| `HISTORY_DAYS` | `850` | Calendar days requested; must cover the 504-session beta estimation plus the deepest skip |
 | `MAX_WORKERS` | `4` | Concurrent API requests |
 | `DATA_DIR` | `data/` | Where to write |
 
@@ -262,17 +233,19 @@ array of closes rather than repeating 584 date strings.
 
 ```jsonc
 {
-  "schema": 2,
+  "schema": 3,
   "generatedAt": "2026-08-14T06:48:21+00:00",
   "dataDate": "2026-08-13",
   "title": "Top 300",
   "scope": "all",
   "universeSize": 300,
   "sessions": 584,
-  "mom": { "blocks": [ { "from": "2025-08-13", "to": "2025-09-11",
-                         "volFrom": "2025-06-12" }, "..." ],
-           "blockSessions": 21, "skipSessions": 21, "volSessions": 63,
-           "through": "2026-07-15" },
+  "benchmarks": {                          // the factor series the score
+    "market":  { "symbol": "VTI",          // regresses against, aligned to
+                 "history": [242.27, "..."] },  // the same shared calendar
+    "sectors": { "Technology": { "symbol": "XLK", "history": ["..."] },
+                 "Healthcare": { "symbol": "XLV", "history": ["..."] } }
+  },
   "dates": ["2024-04-16", "..."],          // shared calendar
   "tickers": [
     {
@@ -289,18 +262,19 @@ array of closes rather than repeating 584 date strings.
       "asOf": "2026-08-13",
       "returns":         { "1w": 2.88, "1m": 6.02, "3m": 5.49, "6m": 1.96,
                            "ytd": 5.76, "1y": 21.66, "2y": 71.83 },
-      "momBlocks":       [ 0.238, -0.031, 0.194, "..." ],
-      "blend": 0.63,
-      "blendWindows":    [ 0.72, 0.54 ],
       "volatility":      { "30d": 39.02, "90d": 39.61, "1y": 36.65 },
       "maxDrawdown1y": -20.22,
-      "mom": 0.320,
       "history": [118.42, null, "..."],    // aligned to `dates`
       "firstSession": "2024-04-16"
     }
   ]
 }
 ```
+
+There is no momentum field anywhere in the file. The score depends on the
+reader's formula settings, so the app computes it from `history` and
+`benchmarks` at view time; a sector file carries only its own sector's factor
+series, the overall table carries all eleven.
 
 `history` is padded with `null` before a ticker's first session, so a recent
 listing charts from its IPO instead of dragging a flat line back through two
@@ -360,8 +334,15 @@ and no anonymous Snack link could be updated in place. The web edition owes
 Expo nothing and republishes over one stable URL.
 
 Three screens — **Ranks**, **Watchlist**, **Ticker detail** — in a dark,
-minimal, industrial theme with a single acid-green accent. Sort, open universe
-and watchlist persist in `localStorage`.
+minimal, industrial theme with a single acid-green accent. The watchlist and
+the score formula persist in `localStorage`; everything positional resets.
+
+The **score formula is built in the app**, from the ƒ chip beside the sort
+chips: pick one lookback window or a 50/50 blend of two, and toggle the skip,
+the volatility adjustment, and the market or sector residual. Every change
+applies immediately — scores, standings and orderings are recomputed on the
+spot against whatever rows are on screen, because none of it is precomputed in
+the data. With the skip on, the charts grey the sessions the score cannot see.
 
 **Ranks** heads with the universe itself as the control: tap the title to swap
 between the Top 300 and any sector. A table already visited is painted from

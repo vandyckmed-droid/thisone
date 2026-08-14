@@ -305,31 +305,36 @@
   summary::-webkit-details-marker { display: none; }
   .prose { color: var(--dim); font-size: 12px; line-height: 19px; margin: 11px 0 0; }
 
-  /* The eleven monthly terms, each a bar off a shared zero line — the shape of
-     the score rather than only its total. */
-  .mom-bars { display: flex; gap: 3px; height: 52px; margin-top: 14px; position: relative; }
-  .mom-bars::before {
-    content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--line);
-  }
-  .mom-bar { flex: 1; position: relative; }
-  .mom-fill { position: absolute; left: 0; right: 0; border-radius: 1px; min-height: 1px; }
-  .mom-fill.up { background: var(--acid); bottom: 50%; }
-  .mom-fill.dn { background: var(--down); top: 50%; }
-  .mom-axis { display: flex; gap: 3px; margin-top: 5px; }
-  .mom-axis span {
-    flex: 1; text-align: center; color: var(--faint);
-    font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums;
-  }
-
-  .windows { margin-top: 12px; border-top: 1px solid var(--line); }
-  .window-row { display: flex; align-items: center; padding: 9px 0; border-top: 1px solid var(--line-soft); }
-  .window-row:first-child { border-top: none; padding: 10px 0 4px; }
-  .window-row span { flex: 1; font-family: var(--mono); font-size: 12px; }
-  .window-row .w-label { color: var(--dim); }
-  .window-row .w-skip { color: var(--faint); }
-  .window-row .w-value { text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
-  .window-row.head span { color: var(--faint); font-size: 11px; letter-spacing: 0.8px; }
   .footnote { color: var(--faint); font-size: 11px; line-height: 16px; margin-top: 26px; border-top: 1px solid var(--line-soft); padding-top: 12px; }
+
+  /* ---------------------------------------------------- formula controls */
+  /* The score is built from parts the reader can switch, so the sheet that
+     edits it is toggle rows and window chips rather than a pick-one list. */
+  .f-section { padding: 10px var(--gutter) 2px; color: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: 1.6px; }
+  .f-chiprow { display: flex; gap: 7px; padding: 8px var(--gutter) 6px; flex-wrap: wrap; }
+  .f-toggle {
+    display: flex; align-items: center; width: 100%; min-height: 44px;
+    padding: 10px var(--gutter); border-top: 1px solid var(--line-soft); gap: 12px;
+  }
+  .f-toggle:active { background: var(--surface-hi); }
+  .f-toggle[disabled] { opacity: 0.45; }
+  .f-text { flex: 1; text-align: left; }
+  .f-label { display: block; color: var(--dim); font-family: var(--mono); font-size: 12px; letter-spacing: 0.8px; }
+  .f-toggle.on .f-label { color: var(--text); }
+  .f-sub { display: block; color: var(--faint); font-size: 11px; line-height: 15px; margin-top: 3px; }
+  .f-pill {
+    flex-shrink: 0; min-width: 44px; text-align: center;
+    padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line);
+    color: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+  }
+  .f-toggle.on .f-pill { color: var(--acid); border-color: var(--acid); background: var(--acid-glow); }
+  .f-reset { display: block; width: 100%; min-height: 44px; padding: 12px var(--gutter); border-top: 1px solid var(--line); color: var(--dim); font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-align: center; }
+  .f-formula {
+    margin: 6px var(--gutter) 2px; padding: 10px 12px; border: 1px solid var(--line-soft);
+    border-radius: 8px; background: var(--bg);
+    color: var(--dim); font-family: var(--mono); font-size: 11px; line-height: 17px;
+  }
+  .f-formula .k { color: var(--acid); }
 </style>
 
 <div class="shell" id="shell">
@@ -435,38 +440,211 @@ function logoHtml(symbol, cls) {
     `<img src="data:image/webp;base64,${b64}" alt="" loading="lazy" decoding="async"></span>`;
 }
 
+/* ========================================================== score formula
+   The score is not published in the data — it is built here, at view time,
+   from raw closes and the tables' benchmark series, because every part of the
+   formula is a setting the reader can change. One engine, no alternates. */
+const LOOKBACKS = [63, 126, 189, 252];
+const LOOKBACK_LABEL = { 63: '3M', 126: '6M', 189: '9M', 252: '12M' };
+/* round(lookback / 12) sessions excluded when SKIP is on. Written out rather
+   than computed: Math.round(10.5) is 11, and 126's skip is defined as 10. */
+const SKIP = { 63: 5, 126: 10, 189: 16, 252: 21 };
+/* Betas are estimated over this many return observations ending at the
+   scoring window's cutoff — the estimation stretch contains the window. */
+const EST_SESSIONS = 504;
+/* A beta from a few dozen observations is noise in every residual; a name
+   without at least a year of paired returns scores nothing instead. */
+const MIN_EST_RETURNS = 252;
+
+const DEFAULT_FORMULA = {
+  blend: true,          // average two windows 50/50
+  windows: [252, 126],  // [0] always scored; [1] joins when blend is on
+  skip: true,           // exclude the most recent SKIP[w] sessions
+  vol: true,            // divide mean return by same-window volatility
+  market: true,         // score residuals over a VTI beta
+  sector: false,        // score residuals over VTI + sector-factor betas
+};
+
+function normalizeFormula(raw) {
+  const f = { ...DEFAULT_FORMULA, ...(raw || {}) };
+  const w = Array.isArray(f.windows) ? f.windows : [];
+  f.windows = [
+    LOOKBACKS.includes(w[0]) ? w[0] : DEFAULT_FORMULA.windows[0],
+    LOOKBACKS.includes(w[1]) ? w[1] : DEFAULT_FORMULA.windows[1],
+  ];
+  if (f.windows[1] === f.windows[0]) {
+    f.windows[1] = f.windows[0] === DEFAULT_FORMULA.windows[1]
+      ? DEFAULT_FORMULA.windows[0] : DEFAULT_FORMULA.windows[1];
+  }
+  for (const k of ['blend', 'skip', 'vol', 'market', 'sector']) f[k] = !!f[k];
+  // The sector model is VTI *plus* the sector factor by definition, so sector
+  // residuals imply the market leg.
+  if (f.sector) f.market = true;
+  return f;
+}
+
+const activeWindows = (f) => (f.blend ? f.windows : [f.windows[0]]);
+const maxSkipOf = (f) => (f.skip ? Math.max(...activeWindows(f).map((w) => SKIP[w])) : 0);
+const formulaName = (f) => activeWindows(f).map((w) => LOOKBACK_LABEL[w]).join('+');
+function formulaTags(f) {
+  const tags = [];
+  if (f.skip) tags.push('SKIP');
+  if (f.vol) tags.push('VOL-ADJ');
+  if (f.sector) tags.push('MKT+SECT RESID');
+  else if (f.market) tags.push('MKT RESID');
+  return tags;
+}
+const describeFormula = (f) =>
+  [formulaName(f), ...formulaTags(f)].join(' · ') || 'RAW RETURN';
+
+/* Daily log returns aligned to the shared calendar; NaN where either close is
+   missing, index 0 always NaN. One pass per series, cached per table. */
+function logReturns(history) {
+  const out = new Array(history ? history.length : 0).fill(NaN);
+  for (let i = 1; i < out.length; i += 1) {
+    const a = history[i - 1]; const b = history[i];
+    if (a > 0 && b > 0) out[i] = Math.log(b / a);
+  }
+  return out;
+}
+
+const returnsCache = {};
+function tableReturns(key) {
+  if (!returnsCache[key]) {
+    const table = DATA.tables[key];
+    const marks = table.benchmarks || {};
+    const sectors = {};
+    for (const [name, s] of Object.entries(marks.sectors || {})) {
+      sectors[name] = logReturns(s.history);
+    }
+    returnsCache[key] = {
+      market: logReturns((marks.market || {}).history),
+      sectors,
+      bySymbol: new Map(table.tickers.map((t) => [t.symbol, logReturns(t.history)])),
+    };
+  }
+  return returnsCache[key];
+}
+
+/**
+ * One window of the score, per the current formula.
+ *
+ * The scoring window is the `w` daily log returns ending `skip` sessions
+ * back (0 when SKIP is off), and it is all-or-nothing: a partial window
+ * would hand a younger company a different question, not a worse answer.
+ *
+ * Residual modes regress the stock on VTI (and its sector factor) over the
+ * EST_SESSIONS returns ending at the same cutoff — plain OLS with an
+ * intercept, so betas come from centered sums — then score
+ * r − β·m (− β₂·s) inside the window. The base score is the mean of those
+ * daily returns; the VOL toggle divides it by their own standard deviation
+ * over the same window.
+ */
+function windowScore(rets, market, sectorArr, n, w, f) {
+  const skip = f.skip ? SKIP[w] : 0;
+  const cut = n - 1 - skip;   // index of the window's last return
+  const start = cut - w + 1;  // and its first; index 0 has no return
+  if (start < 1) return null;
+
+  const useMarket = f.market || f.sector;
+  const useSector = f.sector;
+  if (useSector && !sectorArr) return null; // no factor series for this sector
+
+  let b1 = 0; let b2 = 0;
+  if (useMarket) {
+    const estStart = Math.max(1, cut - EST_SESSIONS + 1);
+    let k = 0; let sy = 0; let sm = 0; let sz = 0;
+    const ys = []; const ms = []; const zs = [];
+    for (let i = estStart; i <= cut; i += 1) {
+      const y = rets[i]; const m = market[i];
+      const z = useSector ? sectorArr[i] : 0;
+      if (!isFinite(y) || !isFinite(m) || !isFinite(z)) continue;
+      ys.push(y); ms.push(m); zs.push(z);
+      sy += y; sm += m; sz += z; k += 1;
+    }
+    if (k < MIN_EST_RETURNS) return null;
+    const my = sy / k; const mm = sm / k; const mz = sz / k;
+    let smm = 0; let smy = 0; let szz = 0; let szy = 0; let smz = 0;
+    for (let i = 0; i < k; i += 1) {
+      const dm = ms[i] - mm; const dy = ys[i] - my; const dz = zs[i] - mz;
+      smm += dm * dm; smy += dm * dy;
+      if (useSector) { szz += dz * dz; szy += dz * dy; smz += dm * dz; }
+    }
+    if (useSector) {
+      const det = smm * szz - smz * smz;
+      if (!(Math.abs(det) > 1e-12)) return null;
+      b1 = (szz * smy - smz * szy) / det;
+      b2 = (smm * szy - smz * smy) / det;
+    } else {
+      if (!(smm > 0)) return null;
+      b1 = smy / smm;
+    }
+  }
+
+  const vals = [];
+  let sum = 0;
+  for (let i = start; i <= cut; i += 1) {
+    let r = rets[i];
+    if (!isFinite(r)) return null;
+    if (useMarket) {
+      const m = market[i];
+      if (!isFinite(m)) return null;
+      r -= b1 * m;
+      if (useSector) {
+        const z = sectorArr[i];
+        if (!isFinite(z)) return null;
+        r -= b2 * z;
+      }
+    }
+    vals.push(r); sum += r;
+  }
+  const mean = sum / vals.length;
+  if (!f.vol) return mean;
+  let vv = 0;
+  for (const v of vals) vv += (v - mean) * (v - mean);
+  const sd = Math.sqrt(vv / vals.length);
+  if (!(sd > 0)) return null;
+  return mean / sd;
+}
+
+/** The full score for one ticker: each active window, blended 50/50. */
+function scoreTicker(rets, R, sector, n, f) {
+  const sectorArr = R.sectors[sector] || null;
+  const parts = activeWindows(f).map((w) => windowScore(rets, R.market, sectorArr, n, w, f));
+  if (parts.some((p) => p === null)) return { score: null, parts };
+  return { score: parts.reduce((a, b) => a + b, 0) / parts.length, parts };
+}
+
 /* ============================================================ ported model
-   Direct ports of app/src/data.js and theme.js — same names, same semantics,
-   so a fix in one belongs in the other. */
+   The screens below began as direct ports of app/src/data.js and theme.js;
+   the scoring above has since replaced that model's precomputed MOM/BLEND. */
 /* Three ways to order the table, and only three. Every other measure a company
    carries lives on its own screen, where there is room to say what it means.
-   MOM and BLEND both show the score itself rather than a standing: they read
-   on their own once you know the field runs about -2.5 to +3. Where a row
-   places is still there, as the row number down the left and as SCORE on the
-   ticker screen. */
+   SCORE shows the score itself rather than a standing; where a row places is
+   still there, as the row number down the left and as STANDING on the ticker
+   screen. */
 const SORTS = [
-  { key: 'mom', label: 'MOM', short: 'MOM', better: 'high', value: (t) => t.mom, format: 'ratio', tone: true },
-  { key: 'blend', label: 'BLEND', short: 'BLEND', better: 'high', value: (t) => t.blend, format: 'ratio', tone: true },
+  { key: 'score', label: 'SCORE', short: 'SCORE', better: 'high', value: (t) => t.score, format: 'score', tone: true },
   { key: 'marketCap', label: 'MKT CAP', short: 'CAP', better: 'high', value: (t) => t.marketCap, format: 'cap', tone: true },
   { key: 'vol', label: 'VOLATILITY', short: 'VOL', better: 'low', value: (t) => t.volatility['1y'], format: 'pct0' },
 ];
 const sortByKey = (key) => SORTS.find((s) => s.key === key) || SORTS[0];
 
 /**
- * MOM as a 0–100 standing within exactly the rows handed in.
+ * The score as a 0–100 standing within exactly the rows handed in.
  *
- * The published score is an absolute ratio, which is the right thing to store
- * and the wrong thing to read: 0.34 says nothing until you know what the field
+ * The raw score is an absolute quantity, which is the right thing to compute
+ * and the wrong thing to read: 0.04 says nothing until you know what the field
  * looks like. So the number beside a row is its percentile among the rows on
- * screen — filter to healthcare and every score is recomputed against those
+ * screen — filter to healthcare and every standing is recomputed against those
  * hundred, because that is now the field. It also disarms the outliers: one
- * 30-bagger sitting at a ratio of 20 would flatten a linear scale, but as a
+ * 30-bagger far clear of the pack would flatten a linear scale, but as a
  * percentile it simply takes the top slot and leaves the rest spread out.
  */
-function momScores(rows) {
+function standings(rows) {
   const scored = rows
-    .filter((t) => t.mom !== null && t.mom !== undefined)
-    .sort((a, b) => b.mom - a.mom);
+    .filter((t) => t.score !== null && t.score !== undefined)
+    .sort((a, b) => b.score - a.score);
   const out = new Map();
   const last = scored.length - 1;
   // Floored rather than rounded, so 100 belongs to the leader alone. Rounding
@@ -491,8 +669,7 @@ function ranksIn(rows, symbol) {
   return {
     count: rows.length,
     marketCap: place((t) => t.marketCap, true),
-    mom: place((t) => t.mom, true),
-    blend: place((t) => t.blend, true),
+    score: place((t) => t.score, true),
     volatility: place((t) => t.volatility['1y'], false),
     '1m': byReturn('1m'), '3m': byReturn('3m'), '6m': byReturn('6m'),
     ytd: byReturn('ytd'), '1y': byReturn('1y'),
@@ -589,10 +766,23 @@ const fmtPrice = (n) => {
 const fmtPct = (n, d = 2) => (n === null || n === undefined ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(d)}%`);
 const fmtMagnitude = (n, d = 1) => (n === null || n === undefined ? '—' : `${n.toFixed(d)}%`);
 const fmtNum = (n, d = 2) => (n === null || n === undefined ? '—' : n.toFixed(d));
+/* Raw scores are small daily quantities — a vol-adjusted residual runs about
+   ±0.15, a bare mean log return about ±0.005 — so precision adapts to the
+   magnitude instead of rounding everything to a wall of 0.00s. */
+const fmtScore = (v) => {
+  if (v === null || v === undefined || !isFinite(v)) return '—';
+  const a = Math.abs(v);
+  if (a >= 100) return v.toFixed(0);
+  if (a >= 1) return v.toFixed(2);
+  if (a >= 0.01) return v.toFixed(3);
+  if (a === 0) return '0.000';
+  return v.toFixed(Math.min(6, 2 - Math.floor(Math.log10(a))));
+};
 const fmtRank = (n) => (n === null || n === undefined ? '—' : `#${n}`);
 const toneClass = (v) => (v === null || v === undefined || v === 0 ? 'flat' : v > 0 ? 'up' : 'dn');
 const missingReason = (key) => ({
-  mom: 'Needs ~13 months', '2y': 'Needs 2 years', '1y': 'Needs 1 year',
+  score: 'Needs more history than this formula uses',
+  '2y': 'Needs 2 years', '1y': 'Needs 1 year',
   maxDrawdown: 'Needs 1 year', '6m': 'Needs 6 months', '90d': 'Needs 6 months',
   '3m': 'Needs 3 months', ytd: 'Listed this year',
 }[key] || 'Not enough history');
@@ -604,8 +794,7 @@ const formatMetric = (format, value) => {
     case 'cap': return fmtCap(value);
     case 'pct': return fmtPct(value);
     case 'pct0': return value === null || value === undefined ? '—' : `${value.toFixed(0)}%`;
-    case 'ratio': return fmtNum(value, 2);
-    case 'score': return fmtNum(value, 0);
+    case 'score': return fmtScore(value);
     default: return fmtNum(value);
   }
 };
@@ -629,15 +818,18 @@ const store = {
 const state = {
   tab: 'ranks',
   universeKey: 'all',
-  sortKey: 'mom',
+  sortKey: 'score',
   direction: 'desc',
   query: '', sector: 'All', industry: 'All',
-  watchSort: 'mom',
+  watchSort: 'score',
   watchlist: store.read('watchlist', []),
+  /* The formula is the reader's data the way the watchlist is, so it survives
+     a reload; everything positional resets. */
+  formula: normalizeFormula(store.read('formula', null)),
   hasScrubbed: store.read('scrubbed', false),
   open: null,           // { symbol, tableKey, tab } or null
   range: '1Y',
-  sheet: null,          // 'universe' | 'cut' | null
+  sheet: null,          // 'universe' | 'cut' | 'formula' | null
 };
 if (!DATA.tables[state.universeKey]) state.universeKey = DATA.index.universes[0].key;
 
@@ -649,20 +841,23 @@ const SPARK_SESSIONS = 90;
 const SPARK_POINTS = 24;
 const YEAR_SESSIONS = 252;
 
-/* The last session MOM sees. Everything after it — the skipped month and the
-   part-month the data ends in — is the stretch the score is blind to, and is
-   what the charts draw in grey. Read from the data rather than written down
-   here, so moving the window moves the charts with it. */
-const FIRST_TABLE = DATA.tables[DATA.index.universes[0].key];
-const MOM_META = FIRST_TABLE.mom || {};
-const MOM_THROUGH = MOM_META.through || null;
+/* The last session the current formula sees — the deepest skip among its
+   active windows, counted back from the last close. Everything after it is
+   the stretch the score is blind to, and is what the charts draw in grey.
+   With SKIP off there is no blind spot and no grey. */
+function throughOf(table) {
+  const back = maxSkipOf(state.formula);
+  if (!back) return null;
+  const dates = table.dates;
+  return dates[Math.max(0, dates.length - 1 - back)];
+}
 
-/** Index of the last point MOM covers, or -1 if it covers none of them. */
-function cutIndex(points) {
-  if (!MOM_THROUGH) return points.length - 1;
+/** Index of the last point the score covers, or -1 if it covers none. */
+function cutIndex(points, through) {
+  if (!through) return points.length - 1;
   let cut = -1;
   for (let i = 0; i < points.length; i += 1) {
-    if (points[i].date <= MOM_THROUGH) cut = i;
+    if (points[i].date <= through) cut = i;
   }
   return cut;
 }
@@ -670,11 +865,11 @@ function cutIndex(points) {
 /**
  * Where the last close sits in its 52-week range, and how it got there.
  *
- * MOM stops measuring 20 sessions back, so a name can be near the top of the
- * table and well off its high — the pullback happened inside the blind spot.
- * This is the number that shows it. High and low are closing prices, since
- * closes are all this app carries; a broker quoting intraday extremes will
- * show a slightly wider band.
+ * With SKIP on the score stops measuring up to a month back, so a name can be
+ * near the top of the table and well off its high — the pullback happened
+ * inside the blind spot. This is the number that shows it. High and low are
+ * closing prices, since closes are all this app carries; a broker quoting
+ * intraday extremes will show a slightly wider band.
  */
 function range52(ticker, dates) {
   const points = seriesFor(ticker, dates, YEAR_SESSIONS);
@@ -698,10 +893,10 @@ function range52(ticker, dates) {
   };
 }
 
-/** The move MOM skipped: from its last covered close to the latest one. */
-function noseMove(ticker, dates) {
+/** The move the skip left out: from the last covered close to the latest one. */
+function noseMove(ticker, dates, through) {
   const points = seriesFor(ticker, dates, Infinity);
-  const cut = cutIndex(points);
+  const cut = cutIndex(points, through);
   if (cut < 0 || cut >= points.length - 1) return null;
   const from = points[cut].close;
   const to = points[points.length - 1].close;
@@ -711,17 +906,18 @@ function noseMove(ticker, dates) {
 /**
  * Sparkline geometry, in two strokes rather than one.
  *
- * The stretch MOM measures is drawn in the direction colour and everything
- * after its cutoff in grey, so the nose reads as separate from the window the
- * score came from. Each half is sampled on its own account so the join lands
- * on the real cutoff, and every point carries its place in the whole series rather
- * than its index within its own half — otherwise the short grey tail would be
- * stretched to the same width as the long coloured head.
+ * The stretch the score measures is drawn in the direction colour and
+ * everything after its cutoff in grey, so the nose reads as separate from the
+ * window the score came from. Each half is sampled on its own account so the
+ * join lands on the real cutoff, and every point carries its place in the
+ * whole series rather than its index within its own half — otherwise the
+ * short grey tail would be stretched to the same width as the long coloured
+ * head.
  */
-function sparkGeometry(points) {
+function sparkGeometry(points, through) {
   const n = points.length;
   if (n < 2) return null;
-  const cut = Math.max(0, cutIndex(points));
+  const cut = Math.max(0, cutIndex(points, through));
   const sample = (from, to, count) => {
     const span = to - from;
     if (span < 1) return null;
@@ -736,17 +932,37 @@ function sparkGeometry(points) {
   return { head: sample(0, cut, 18), tail: sample(cut, n - 1, 7) };
 }
 
-/* Sparkline geometry per universe, computed once and kept. */
+/* Scores and sparkline geometry per universe, computed once per formula and
+   kept. Both depend on the formula — the score entirely, the spark through
+   its grey cutoff — so a formula change empties the cache and the next render
+   recomputes whatever tables it actually touches. */
 const decorated = {};
 function tickersOf(key) {
   if (!decorated[key]) {
     const table = DATA.tables[key];
+    const R = tableReturns(key);
+    const n = table.dates.length;
+    const through = throughOf(table);
     decorated[key] = table.tickers.map((t) => {
       const points = seriesFor(t, table.dates, SPARK_SESSIONS);
-      return { ...t, spark: sparkGeometry(points), sparkChange: changeOver(points) };
+      const { score, parts } = scoreTicker(R.bySymbol.get(t.symbol), R, t.sector, n, state.formula);
+      return {
+        ...t, score, scoreParts: parts,
+        spark: sparkGeometry(points, through), sparkChange: changeOver(points),
+      };
     });
   }
   return decorated[key];
+}
+
+function applyFormula(mutate) {
+  mutate(state.formula);
+  state.formula = normalizeFormula(state.formula);
+  store.write('formula', state.formula);
+  for (const key of Object.keys(decorated)) delete decorated[key];
+  renderRanks(); renderWatch();
+  if (state.open) renderTicker();
+  if (state.sheet === 'formula') renderFormulaSheet();
 }
 
 const $ = (id) => document.getElementById(id);
@@ -837,7 +1053,9 @@ function renderRanks() {
 
   $('sort-chips').innerHTML = SORTS.map((s) =>
     `<button class="chip${s.key === state.sortKey ? ' active' : ''}" data-sort="${s.key}" ` +
-    `aria-label="Sort by ${s.label}">${s.short}</button>`).join('');
+    `aria-label="Sort by ${s.label}">${s.short}</button>`).join('') +
+    `<button class="chip" data-formula-open aria-label="Edit the score formula">` +
+    `ƒ ${esc(describeFormula(state.formula))}</button>`;
 
   const rows = arrange(tickers, {
     sortKey: state.sortKey, query: state.query,
@@ -904,15 +1122,18 @@ function renderWatch() {
 
   $('watch-chips').innerHTML = list.length ? SORTS.map((s) =>
     `<button class="chip${s.key === state.watchSort ? ' active' : ''}" data-wsort="${s.key}" ` +
-    `aria-label="Sort by ${s.label}">${s.short}</button>`).join('') : '';
+    `aria-label="Sort by ${s.label}">${s.short}</button>`).join('') +
+    `<button class="chip" data-formula-open aria-label="Edit the score formula">` +
+    `ƒ ${esc(describeFormula(state.formula))}</button>` : '';
   $('watch-columns').hidden = !list.length;
   $('watch-col-metric').textContent = sort.label;
 
   views.watchlist = rows;
   $('watch-list').innerHTML = rows.length
     ? rows.map((t, i) => {
-        // MOM stops 20 sessions back, so the watchlist carries the piece it
-        // cannot see: where this close sits in the year's range.
+        // With SKIP on the score stops short of today, so the watchlist
+        // carries the piece it cannot see: where this close sits in the
+        // year's range.
         const key = tableKeyOf.get(t.symbol);
         const band = range52(t, DATA.tables[key].dates);
         const html = rowHtml(t, i + 1, sort, true, band);
@@ -943,18 +1164,18 @@ function renderTicker() {
   // on screen, filters and all — not against the whole universe.
   const rows = views[state.open.tab] || [];
   const rank = ranksIn(rows, symbol);
-  const score = momScores(rows).get(symbol);
+  const standing = standings(rows).get(symbol);
   const scope = state.open.tab === 'watchlist'
     ? `WATCHLIST ${rank.count}`
     : rows.length === table.tickers.length
       ? universeLabel(table)
       : `THIS VIEW ${rank.count}`;
-  const monthly = t.momBlocks || [];
-  const momBlocks = ((table.mom || {}).blocks) || [];
-  const blendWindows = ((table.blend || {}).windows) || [];
-  const peak = monthly.reduce((m, s) => Math.max(m, Math.abs(s)), 0);
+  const f = state.formula;
+  const windows = activeWindows(f);
+  const parts = t.scoreParts || [];
+  const through = throughOf(table);
   const band = range52(t, table.dates);
-  const nose = noseMove(t, table.dates);
+  const nose = noseMove(t, table.dates, through);
 
   const sessions = (RANGES.find((r) => r.key === state.range) || RANGES[4]).sessions;
   const points = seriesFor(t, table.dates, sessions);
@@ -1007,13 +1228,15 @@ function renderTicker() {
     <div class="grid">
       ${stat('OFF HIGH', band.offHigh <= -0.05 ? fmtPct(band.offHigh, 1) : '—')}
       ${stat('ABOVE LOW', fmtPct(band.aboveLow, 1))}
-      ${stat('AFTER CUTOFF', fmtPct(nose, 1), toneClass(nose), '', missingReason('mom'))}
+      ${stat('AFTER CUTOFF', fmtPct(nose, 1), toneClass(nose), '', 'With SKIP off the score runs to the last close')}
     </div>
-    <p class="note">MOM stops at ${esc(MOM_THROUGH)}, so the last column is the move since — exactly what
+    <p class="note">${through
+      ? `The score's window stops at ${esc(through)}, so the last column is the move since — exactly what
     the score could not see, and the grey stretch on the chart above. A name can rank near the top and
-    still be well off its high, which is the pullback this section is for. High and low are closing prices
-    over the last ${band.sessions} sessions, so a broker quoting intraday extremes will show a slightly
-    wider band.</p>` : ''}
+    still be well off its high, which is the pullback this section is for.`
+      : `With SKIP off the score runs to the last close, so it has no blind spot to report here.`}
+    High and low are closing prices over the last ${band.sessions} sessions, so a broker quoting intraday
+    extremes will show a slightly wider band.</p>` : ''}
 
     <div class="section-title">RETURNS</div>
     <div class="grid">${RETURN_ROWS.map(([key, label]) =>
@@ -1038,78 +1261,56 @@ function renderTicker() {
       annual return on its own hides.</p>
     </details>
 
-    <div class="section-title">MOM</div>
+    <div class="section-title">SCORE</div>
     <div class="grid">
-      ${stat('SCORE', score === undefined ? '—' : fmtNum(score, 0), 'up', '', missingReason('mom'))}
-      ${stat('SUM', fmtNum(t.mom, 2), '', '', missingReason('mom'))}
-      ${stat('BLOCKS UP', monthly.length ? `${monthly.filter((s) => s > 0).length}/${monthly.length}` : '—')}
+      ${stat('STANDING', standing === undefined ? '—' : fmtNum(standing, 0), 'up', '', missingReason('score'))}
+      ${stat('SCORE', fmtScore(t.score), toneClass(t.score), '', missingReason('score'))}
+      ${f.blend ? windows.map((w, i) => stat(
+        `${LOOKBACK_LABEL[w]} HALF`, fmtScore(parts[i]),
+        toneClass(parts[i]), '', missingReason('score'))).join('') : ''}
     </div>
-    ${monthly.length ? `<div class="mom-bars">${monthly.map((s, i) => {
-      const height = peak ? Math.abs(s) / peak * 46 : 0;
-      const b = momBlocks[i] || {};
-      return `<span class="mom-bar" title="${esc(b.from || '')} to ${esc(b.to || '')}  ${fmtNum(s, 3)}">` +
-        `<span class="mom-fill ${s >= 0 ? 'up' : 'dn'}" style="height:${height.toFixed(1)}%"></span></span>`;
-    }).join('')}</div>
-    <div class="mom-axis">${momBlocks.map((b) =>
-      `<span>${esc((b.to || '').slice(5, 7))}</span>`).join('')}</div>
-    <p class="note">One term per 21-session block, ${esc((momBlocks[0] || {}).from)} to
-    ${esc((momBlocks[momBlocks.length - 1] || {}).to)}, each the block's mean daily log return over the
-    volatility of the 63 sessions ending with it. The score is their sum, so a company earns it by climbing
-    block after block rather than in one leap. Labels are the calendar month each block ends in; the blocks
-    themselves are counted in trading days, not months.</p>` : ''}
-    <details><summary>HOW MOM WORKS ›</summary>
-      <p class="prose">Eleven blocks of 21 trading days are scored, one at a time. For each, every daily
-      log return inside the block is averaged, and that average is divided by the daily volatility measured
-      over the 63 sessions ending at the block's last close. The eleven results are added together.</p>
-      <p class="prose">The most recent 21 trading days are left out — the twelve-minus-one skip, because
-      the latest month tends to reverse rather than persist. Counting in sessions rather than waiting for
-      the calendar to turn keeps that cutoff a month behind the last close every day of the year. Here it
-      falls on ${esc(MOM_THROUGH)}; everything after is the grey stretch on the chart above.</p>
-      <p class="prose">Eleven blocks plus the skip is 252 sessions, so the whole measure spans a year
-      ending 21 days ago. The month labels under the bars are only where each block happens to finish.</p>
-      <p class="prose">Volatility is measured over 63 sessions rather than the block itself because 21
-      returns are far too few for a stable estimate, and it sits in the denominator of every term.</p>
-      <p class="prose">Both halves of each term are daily quantities, so a monthly score is a unitless
-      daily Sharpe and the sum needs no annualising. Annualising both halves would only multiply everything
-      by √252, a constant that changes no ordering.</p>
-      <p class="prose">Summing eleven terms rather than measuring one long window is what makes this a
-      consistency measure. A company that rose steadily all year scores in every term; one that doubled in
-      a fortnight and drifted for ten blocks collects once and contributes nothing across the rest.</p>
-      <p class="prose">The sum above is absolute and never changes. The score beside it is that sum's
-      standing among the ${rank.count} rows currently on screen, where 100 is the strongest of them. Filter
-      the list and every score is recomputed, because the field being measured against has changed.</p>
-      <p class="prose">It stays blank until a company has traded all 252 sessions plus the 63-session
-      run-up the first block needs. Summing whichever blocks happened to exist would give a younger company
-      a smaller number rather than a worse one, which is not a ranking.</p>
-    </details>
-
-    <div class="section-title">BLEND</div>
-    <div class="grid">
-      ${stat('BLEND', fmtNum(t.blend, 2), toneClass(t.blend), '', missingReason('mom'))}
-      ${blendWindows.map((w, i) => stat(
-        `${w.sessions}-${w.skip}`, fmtNum((t.blendWindows || [])[i], 2),
-        toneClass((t.blendWindows || [])[i]), '', missingReason('mom'))).join('')}
+    <div class="chip-row" aria-label="Score formula">
+      <button class="chip" data-formula-open aria-label="Edit the score formula">ƒ ${esc(describeFormula(f))}</button>
     </div>
-    <p class="note">The same question asked over two long windows instead of eleven short ones —
-    twelve months minus one, and six minus one — each measured whole and the pair averaged.</p>
-    <details><summary>HOW BLEND DIFFERS FROM MOM ›</summary>
-      <p class="prose">Each window takes every daily log return inside it, divides the average by the
-      daily volatility of that same stretch, and multiplies by √252. The two results are averaged.</p>
-      <p class="prose">MOM scores eleven short blocks separately and adds them, so a company has to keep
-      earning across the year. BLEND measures each long window in one piece, so a single decisive run can
-      carry it and a flat spell in the middle costs nothing as long as the whole stretch ends well. Sorting
-      by one and then the other is a quick way to see which kind of year a company had.</p>
-      <p class="prose">The √252 is the whole of what annualising both halves of the ratio would do — the
-      return scales by 252 and the volatility by its root. It is a constant, so it reorders nothing; it is
-      here because the numbers read more naturally with it than without.</p>
-      <p class="prose">Both windows or nothing, and both stop short of today like MOM does, though by
-      their own margins: 20 sessions for the longer, 10 for the shorter.</p>
+    <p class="note">${f.blend
+      ? `A 50/50 blend: each window is scored on its own and the two results are averaged, so the pair
+      has to agree before a name climbs the table.`
+      : `One window, scored whole.`}
+    ${f.skip ? `The most recent sessions are skipped — ${windows.map((w) =>
+      `${SKIP[w]} for the ${LOOKBACK_LABEL[w]} window`).join(', ')} — because the latest stretch tends
+    to reverse rather than persist.` : `No sessions are skipped; the window runs to the last close.`}
+    Tap the formula to change any of it — every score and rank follows immediately.</p>
+    <details><summary>HOW THE SCORE WORKS ›</summary>
+      <p class="prose">The base measure over ${f.blend ? 'each' : 'the'} window is the mean daily log
+      return of the sessions inside it${f.skip ? ', after the skip' : ''}.
+      ${f.vol ? `With VOL-ADJ on, that mean is divided by the daily volatility of the same returns over
+      the same window, so a point earned calmly outranks the same point earned in whipsaw.` : `VOL-ADJ is
+      off, so the score is the bare mean and volatility goes unpunished.`}</p>
+      ${f.sector
+        ? `<p class="prose">Residuals are on, in sector form: each stock is regressed on VTI and its own
+      sector's SPDR fund over the ${EST_SESSIONS} sessions ending at the window's cutoff, and what gets
+      scored is the return left over after both betas — the stretch the market and the sector cannot
+      explain.</p>`
+        : f.market
+          ? `<p class="prose">Market residuals are on: each stock's beta against VTI is estimated over the
+      ${EST_SESSIONS} sessions ending at the window's cutoff, and what gets scored is stock return minus
+      beta times the VTI return — the move the market cannot explain — measured inside the window.</p>`
+          : `<p class="prose">Residuals are off, so raw returns are scored: a stock gets full credit for
+      whatever the whole market did.</p>`}
+      ${f.blend ? `<p class="prose">The two windows are computed independently — each with its own skip
+      and its own beta estimation — and their raw scores are combined 50/50.</p>` : ''}
+      <p class="prose">The score above is absolute. STANDING is that score's percentile among the
+      ${rank.count} rows currently on screen, where 100 is the strongest of them. Filter the list and
+      every standing is recomputed, because the field being measured against has changed.</p>
+      <p class="prose">A window is all-or-nothing: a company must have traded every session of it
+      ${(f.market || f.sector) ? `, and carry at least ${MIN_EST_RETURNS} sessions of paired history for
+      the beta estimate,` : ''} or it scores nothing. A partial window would hand a younger company a
+      different question, not a worse answer.</p>
     </details>
 
     <div class="section-title">RANK IN ${esc(scope)}</div>
     <div class="grid">
-      ${stat('MOM', fmtRank(rank.mom), 'up')}
-      ${stat('BLEND', fmtRank(rank.blend))}
+      ${stat('SCORE', fmtRank(rank.score), 'up')}
       ${stat('MARKET CAP', fmtRank(rank.marketCap))}
       ${stat('LOW VOL', fmtRank(rank.volatility))}
       ${RANK_ROWS.map(([key, label]) => stat(label, fmtRank(rank[key]))).join('')}
@@ -1119,13 +1320,13 @@ function renderTicker() {
     Return placings use the plain windows above, with nothing left off.</p>
     <p class="footnote">Dividend-adjusted closes, ${esc(t.firstSession)} to ${esc(t.asOf)}.</p>`;
 
-  mountChart(points);
+  mountChart(points, through);
   $('ticker-overlay').classList.add('open');
   $('ticker-scroll').scrollTop = 0;
 }
 
 /* ------------------------------------------------------------- the chart */
-function mountChart(points) {
+function mountChart(points, through) {
   const box = $('chart-box');
   const readout = $('chart-readout');
   const axis = $('chart-axis');
@@ -1152,10 +1353,10 @@ function mountChart(points) {
   const rising = points[points.length - 1].close >= points[0].close;
   const stroke = rising ? 'var(--acid)' : 'var(--down)';
 
-  // The tail MOM leaves out, greyed so it reads apart from the stretch the
-  // score came from. A range that begins after the cutoff has no split to
+  // The tail the skip leaves out, greyed so it reads apart from the stretch
+  // the score came from. A range that begins after the cutoff has no split to
   // draw — it is all blind spot, which the caption says instead.
-  const mark = cutIndex(points);
+  const mark = cutIndex(points, through);
   const showNose = mark >= 1 && mark < points.length - 1;
   const cut = showNose ? mark : points.length - 1;
   const head = path(xy.slice(0, cut + 1));
@@ -1172,11 +1373,13 @@ function mountChart(points) {
   axis.innerHTML = `<span>${esc(points[0].date)}</span><span>${esc(points[points.length - 1].date)}</span>`;
   const note = $('chart-note');
   if (note) {
-    note.textContent = showNose
-      ? `Grey: after ${MOM_THROUGH}, the 21 trading days MOM skips.`
-      : allAfter
-        ? `MOM's window ends ${MOM_THROUGH}, before this range begins — it sees none of this.`
-        : '';
+    const back = maxSkipOf(state.formula);
+    note.textContent = !through ? ''
+      : showNose
+        ? `Grey: after ${through}, the ${back} trading days the score skips.`
+        : allAfter
+          ? `The score's window ends ${through}, before this range begins — it sees none of this.`
+          : '';
   }
 
   box.innerHTML =
@@ -1231,8 +1434,59 @@ function mountChart(points) {
 }
 
 /* ================================================================= sheets */
+/**
+ * The formula sheet: the score's parts laid out as controls.
+ *
+ * Nothing here is applied on close — every tap lands immediately, the list
+ * re-ranks behind the sheet, and the sheet itself re-renders to show the new
+ * state. The default is the 50/50 blend of 12M and 6M, skipped, vol-adjusted,
+ * market-residual.
+ */
+function renderFormulaSheet() {
+  const f = state.formula;
+  const winChips = (slot) => LOOKBACKS.map((w) => {
+    const active = f.windows[slot] === w;
+    return `<button class="chip${active ? ' active' : ''}" data-fwin="${slot}:${w}" ` +
+      `aria-label="Set window ${slot ? 'B' : 'A'} to ${LOOKBACK_LABEL[w]}" aria-pressed="${active}">` +
+      `${LOOKBACK_LABEL[w]} · ${w}D${f.skip ? ` −${SKIP[w]}` : ''}</button>`;
+  }).join('');
+  const toggle = (key, label, sub, on, disabled = '') =>
+    `<button class="f-toggle${on ? ' on' : ''}" data-ftoggle="${key}" role="switch" ` +
+    `aria-checked="${on}" aria-label="${label}" ${disabled}>` +
+    `<span class="f-text"><span class="f-label">${label}</span>` +
+    `<span class="f-sub">${sub}</span></span>` +
+    `<span class="f-pill">${on ? 'ON' : 'OFF'}</span></button>`;
+
+  const expr = f.blend
+    ? `<span class="k">0.5</span>·score(${LOOKBACK_LABEL[f.windows[0]]}) + ` +
+      `<span class="k">0.5</span>·score(${LOOKBACK_LABEL[f.windows[1]]})`
+    : `score(${LOOKBACK_LABEL[f.windows[0]]})`;
+  const inner = [
+    f.skip ? 'skip recent' : null, f.sector ? 'mkt+sector residual' : f.market ? 'mkt residual' : null,
+    f.vol ? 'mean ÷ vol' : 'mean return',
+  ].filter(Boolean).join(', ');
+
+  $('sheet-title').textContent = 'SCORE FORMULA';
+  $('sheet-hint').hidden = false;
+  $('sheet-hint').textContent =
+    'Every change applies immediately — the table behind this sheet is already re-ranked.';
+  $('sheet-list').innerHTML =
+    `<div class="f-formula">score = ${expr}<br>where score(w) = ${esc(inner)}</div>` +
+    `<div class="f-section">WINDOW${f.blend ? ' A' : ''}</div>` +
+    `<div class="f-chiprow">${winChips(0)}</div>` +
+    (f.blend ? `<div class="f-section">WINDOW B</div><div class="f-chiprow">${winChips(1)}</div>` : '') +
+    toggle('blend', 'BLEND 50/50', 'Score two windows independently and average their raw scores.', f.blend) +
+    toggle('skip', 'SKIP RECENT', 'Exclude the most recent round(window/12) sessions: 5, 10, 16 or 21 — the stretch that tends to reverse.', f.skip) +
+    toggle('vol', 'VOLATILITY ADJUST', 'Divide the window’s mean daily log return by its own daily volatility.', f.vol) +
+    toggle('market', 'MARKET RESIDUAL', `Regress on VTI over the ${EST_SESSIONS} sessions ending at the cutoff; score return − β·VTI.`, f.market, f.sector ? 'disabled' : '') +
+    toggle('sector', 'SECTOR RESIDUAL', 'Regress on VTI and the sector’s SPDR fund together; score what neither explains. Includes the market leg.', f.sector) +
+    `<button class="f-reset" data-freset>RESET TO DEFAULT — ƒ ${esc(describeFormula(normalizeFormula(null)))}</button>`;
+  $('sheet-back').classList.add('open');
+}
+
 function openSheet(kind) {
   state.sheet = kind;
+  if (kind === 'formula') { renderFormulaSheet(); return; }
   const table = DATA.tables[state.universeKey];
   const bySector = table.scope !== 'sector';
   let title = ''; let hint = ''; let options = []; let current = '';
@@ -1332,6 +1586,27 @@ document.querySelectorAll('.tab').forEach((el) => {
 $('universe-btn').addEventListener('click', () => openSheet('universe'));
 $('cut-btn').addEventListener('click', () => openSheet('cut'));
 $('sheet-back').addEventListener('click', (e) => {
+  const flip = e.target.closest('[data-ftoggle]');
+  if (flip && !flip.disabled) {
+    const key = flip.dataset.ftoggle;
+    applyFormula((f) => { f[key] = !f[key]; });
+    return;
+  }
+  const win = e.target.closest('[data-fwin]');
+  if (win) {
+    const [slot, sessions] = win.dataset.fwin.split(':').map(Number);
+    applyFormula((f) => {
+      const other = 1 - slot;
+      // Picking the other slot's window swaps them, so the pair stays a pair.
+      if (f.windows[other] === sessions) f.windows[other] = f.windows[slot];
+      f.windows[slot] = sessions;
+    });
+    return;
+  }
+  if (e.target.closest('[data-freset]')) {
+    applyFormula((f) => Object.assign(f, normalizeFormula(null)));
+    return;
+  }
   const opt = e.target.closest('.sheet-opt');
   if (opt) pickSheet(opt.dataset.value);
   else if (!e.target.closest('.sheet')) closeSheet();
@@ -1362,6 +1637,7 @@ $('dir-btn').addEventListener('click', () => {
 function listHandler(e) {
   const star = e.target.closest('[data-star]');
   if (star) { e.stopPropagation(); toggleStar(star.dataset.star); return; }
+  if (e.target.closest('[data-formula-open]')) { openSheet('formula'); return; }
   const chip = e.target.closest('[data-sort]');
   if (chip) {
     const key = chip.dataset.sort;
@@ -1379,6 +1655,7 @@ $('pane-watchlist').addEventListener('click', listHandler);
 
 $('ticker-overlay').addEventListener('click', (e) => {
   if (e.target.closest('#back-btn')) { closeTicker(); return; }
+  if (e.target.closest('[data-formula-open]')) { openSheet('formula'); return; }
   const star = e.target.closest('[data-star]');
   if (star) { toggleStar(star.dataset.star); return; }
   const chip = e.target.closest('[data-range]');

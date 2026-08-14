@@ -10,8 +10,9 @@ Pipeline stages
 ---------------
 1. universe   -- screen for eligible US common stocks and drop share-class and
                  debt/preferred duplicates
-2. prices     -- pull ~2 years of dividend-adjusted daily closes per ticker
-3. metrics    -- returns, annualised volatility, drawdown, momentum
+2. prices     -- pull ~2 years of dividend-adjusted daily closes per ticker,
+                 plus the benchmark series the app's scoring needs
+3. metrics    -- returns, annualised volatility, drawdown
 4. validate   -- refuse to publish a snapshot that fails any sanity check
 5. write      -- one table of the largest TOP_N overall and one of the largest
                  SECTOR_N in each sector, every file replaced atomically so a
@@ -34,7 +35,6 @@ MAX_WORKERS             concurrent API requests (default 8)
 
 from __future__ import annotations
 
-import bisect
 import json
 import math
 import os
@@ -86,49 +86,33 @@ WINDOWS = {"1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252, "2y": 504}
 
 # The plain return windows above run right up to the last close. A "3 month
 # return" on the table means exactly that, so it can be checked against any
-# other source, and the skipping that momentum needs lives inside momentum.
+# other source. Momentum is not computed here at all: the app builds the score
+# itself from raw history, because the formula is user-configurable -- lookback,
+# skip, volatility adjustment and factor residuals are all toggles -- and a
+# score frozen at build time could only ever answer one configuration.
 #
-# MOM scores each of eleven 21-session blocks on its own: the block's mean daily
-# log return over a 63-session volatility measured to that block's end, summed.
-# Eleven scores rather than one window return is what makes it a consistency
-# measure -- a stock that climbed steadily through the year scores in every
-# term, while one that doubled in a fortnight and drifted for ten months
-# collects once and contributes nothing the rest of the year.
-#
-# The blocks roll with the as-of date rather than snapping to calendar months.
-# Counting back 21 sessions puts the cutoff a month behind the last close every
-# day of the year; waiting for the calendar to turn instead means that by the
-# end of a month the score is blind to nearly two, and the skip breathes between
-# one month and two depending on the date the pipeline happened to run.
-#
-# Both halves are daily quantities, so each monthly score is a unitless daily
-# Sharpe and the sum needs no annualising. Annualising both halves only ever
-# multiplied the result by sqrt(252) anyway -- a constant that changed no
-# ordering -- and the earlier attempt to do it geometrically, compounding a
-# simple return over a log-return volatility, mixed two scales and inflated
-# exactly the most extreme names.
-#
-# The volatility window is 63 sessions rather than the month itself because a
-# single month offers about 21 returns, which is far too few for a stable
-# estimate -- and it sits in the denominator of every term.
-MOM_BLOCKS = 11
-MOM_BLOCK_SESSIONS = 21
-MOM_SKIP_SESSIONS = 21
-MOM_VOL_SESSIONS = 63
-
-# BLEND is the other way of asking the same question: instead of eleven small
-# windows scored separately, two long ones -- twelve months minus one, and six
-# minus one -- each measured whole and the pair averaged. Where MOM rewards a
-# company for climbing in term after term, BLEND only asks how the whole run
-# looked, so a single decisive stretch can carry it. Both are published; the
-# table lets the reader sort by either.
-#
-# Each window is a mean daily log return over the daily volatility of the same
-# stretch, multiplied by sqrt(252). That multiplier is exactly what annualising
-# both halves of the ratio amounts to -- the return scales by 252 and the
-# volatility by its root -- so it is a constant that reorders nothing and is
-# applied here only because the resulting numbers read more naturally.
-BLEND_WINDOWS = ((250, 20), (125, 10))
+# What the pipeline owes that scoring is the factor series it regresses
+# against: one whole-market benchmark and one per sector, published aligned to
+# the same shared calendar as every ticker. The app estimates betas over the
+# ESTIMATION_SESSIONS *ending at* a scoring window's cutoff -- the estimation
+# stretch contains the scoring window -- so the calendar has to carry at least
+# 504 sessions plus the deepest skip (21): ~526 sessions, which HISTORY_DAYS
+# at 850 calendar days comfortably covers.
+MARKET_BENCHMARK = "VTI"
+SECTOR_BENCHMARKS = {
+    "Basic Materials": "XLB",
+    "Communication Services": "XLC",
+    "Consumer Cyclical": "XLY",
+    "Consumer Defensive": "XLP",
+    "Energy": "XLE",
+    "Financial Services": "XLF",
+    "Healthcare": "XLV",
+    "Industrials": "XLI",
+    "Real Estate": "XLRE",
+    "Technology": "XLK",
+    "Utilities": "XLU",
+}
+ESTIMATION_SESSIONS = 504
 
 # Names that betray a note, bond, preferred or depositary line rather than a
 # common share. FMP reports these with the *parent company's* market cap.
@@ -422,148 +406,39 @@ def annualised_vol(closes: list[float], sessions: int) -> float | None:
     return statistics.pstdev(rets) * math.sqrt(TRADING_DAYS_PER_YEAR) * 100
 
 
-def mom_blocks(calendar: list[str]) -> list[dict[str, str]]:
-    """The eleven 21-session blocks MOM scores, oldest first.
+def load_benchmarks(calendar: list[str]) -> dict[str, Any]:
+    """The factor series the app regresses against, aligned to the calendar.
 
-    Counted back in trading days from the last session: the most recent 21 are
-    skipped, and the 231 before them divide into eleven blocks. Together with
-    the skip that is 252 sessions -- a year -- so this is twelve-minus-one
-    measured in sessions rather than snapped to the calendar.
-
-    Each block carries the date its volatility window opens as well, and every
-    boundary comes from the shared calendar, so all companies in a table are
-    scored over exactly the same stretches of trading.
+    One market series and one per sector, each an ETF fetched exactly the way
+    every ticker is. Published under its own key rather than as rows -- these
+    are funds, not companies, and must never appear in a table.
     """
-    n = len(calendar)
-    if n < MOM_SKIP_SESSIONS + MOM_BLOCKS * MOM_BLOCK_SESSIONS:
-        return []
+    symbols = [MARKET_BENCHMARK] + sorted(set(SECTOR_BENCHMARKS.values()))
+    histories = load_history(symbols)
 
-    last = n - 1 - MOM_SKIP_SESSIONS
-    blocks: list[dict[str, str]] = []
-    for step in range(MOM_BLOCKS - 1, -1, -1):
-        end = last - step * MOM_BLOCK_SESSIONS
-        start = end - MOM_BLOCK_SESSIONS + 1
-        vol_start = end - MOM_VOL_SESSIONS + 1
-        # Every block needs a close before its volatility window to take that
-        # window's first return from.
-        if vol_start < 1:
-            return []
-        blocks.append({"from": calendar[start], "to": calendar[end],
-                       "volFrom": calendar[vol_start]})
-    return blocks
+    def aligned(symbol: str) -> dict[str, Any]:
+        series = histories.get(symbol) or {}
+        if len(series) < MIN_CALENDAR_SESSIONS:
+            raise PipelineError(f"benchmark {symbol}: only {len(series)} sessions")
+        return {"symbol": symbol,
+                "history": [round(c, 2) if c is not None else None
+                            for c in align(series, calendar)]}
 
-
-def mom_meta(calendar: list[str]) -> dict[str, Any]:
-    """What MOM covered, so the app can say so and grey what it did not.
-
-    `through` is the last session MOM sees -- 21 trading days back from the last
-    close. Everything after it is the stretch the score is blind to, which is
-    exactly what the app draws in grey.
-    """
-    blocks = mom_blocks(calendar)
+    by_symbol = {s: aligned(s) for s in symbols}
     return {
-        "blocks": blocks,
-        "blockSessions": MOM_BLOCK_SESSIONS,
-        "skipSessions": MOM_SKIP_SESSIONS,
-        "volSessions": MOM_VOL_SESSIONS,
-        "through": blocks[-1]["to"] if blocks else None,
-        "measure": ("sum over 11 rolling 21-session blocks of "
-                    "(mean daily log return / 63-session daily volatility)"),
+        "market": by_symbol[MARKET_BENCHMARK],
+        "sectors": {sector: by_symbol[etf]
+                    for sector, etf in SECTOR_BENCHMARKS.items()},
     }
 
 
-def blend_windows(calendar: list[str]) -> list[dict[str, Any]]:
-    """The two long windows BLEND averages, as dates off the shared calendar."""
-    n = len(calendar)
-    windows: list[dict[str, Any]] = []
-    for sessions, skip in BLEND_WINDOWS:
-        start, end = n - 1 - sessions, n - 1 - skip
-        if start < 0 or end <= start:
-            return []
-        windows.append({"sessions": sessions, "skip": skip,
-                        "from": calendar[start], "to": calendar[end]})
-    return windows
-
-
-def window_sharpe(dated: list[tuple[str, float]], window: dict[str, Any]) -> float | None:
-    """One BLEND window: daily return over daily volatility, times sqrt(252).
-
-    Both halves are daily quantities over the same stretch, so the ratio is a
-    daily Sharpe; the multiplier is the whole of what annualising both halves
-    would do, and changes no ordering.
-    """
-    days = [day for day, _ in dated]
-    start = bisect.bisect_left(days, window["from"])
-    end = bisect.bisect_right(days, window["to"]) - 1
-    if end <= start:
-        return None
-
-    rets = []
-    for i in range(max(start + 1, 1), end + 1):
-        before, after = dated[i - 1][1], dated[i][1]
-        if before > 0 and after > 0:
-            rets.append(math.log(after / before))
-    if len(rets) < window["sessions"] - window["skip"]:
-        return None
-
-    deviation = statistics.pstdev(rets)
-    if deviation <= 0:
-        return None
-    return (sum(rets) / len(rets)) / deviation * math.sqrt(TRADING_DAYS_PER_YEAR)
-
-
-def blend_momentum(dated: list[tuple[str, float]],
-                   windows: list[dict[str, Any]]) -> tuple[float | None, list[float]]:
-    """BLEND and the two window scores it averages. Both windows or nothing."""
-    if not windows:
-        return None, []
-    scores = [window_sharpe(dated, w) for w in windows]
-    if any(s is None for s in scores):
-        return None, []
-    return sum(scores) / len(scores), scores
-
-
-def block_momentum(dated: list[tuple[str, float]],
-                   blocks: list[dict[str, str]]) -> tuple[float | None, list[float]]:
-    """MOM and the eleven block scores it sums.
-
-    Each block contributes its mean daily log return divided by the daily
-    volatility of the 63 sessions ending with it. All eleven or nothing: a sum
-    over whichever blocks happened to exist would be a smaller number for a
-    younger company rather than a worse one, which is not a ranking.
-
-    Blocks arrive as dates rather than offsets, so a company that missed a
-    session finds fewer returns inside one and scores nothing, rather than
-    silently having its blocks slide out of step with everyone else's.
-    """
-    if len(blocks) < MOM_BLOCKS or len(dated) < 2:
-        return None, []
-
-    days = [day for day, _ in dated]
-    # Log returns indexed against `dated`; index 0 has no predecessor.
-    rets: list[float | None] = [None]
-    for (_, before), (_, after) in zip(dated, dated[1:]):
-        rets.append(math.log(after / before) if before > 0 and after > 0 else None)
-
-    scores: list[float] = []
-    for block in blocks:
-        end = bisect.bisect_right(days, block["to"]) - 1
-        start = bisect.bisect_left(days, block["from"])
-        inside = [rets[i] for i in range(max(start, 1), end + 1) if rets[i] is not None]
-        if len(inside) < MOM_BLOCK_SESSIONS:
-            return None, []
-
-        floor = bisect.bisect_left(days, block["volFrom"])
-        window = [rets[i] for i in range(max(floor, 1), end + 1) if rets[i] is not None]
-        if len(window) < MOM_VOL_SESSIONS:
-            return None, []
-
-        deviation = statistics.pstdev(window)
-        if deviation <= 0:
-            return None, []
-        scores.append((sum(inside) / len(inside)) / deviation)
-
-    return sum(scores), scores
+def benchmarks_for(benchmarks: dict[str, Any], sectors: set[str]) -> dict[str, Any]:
+    """The slice of the benchmark set one table actually needs."""
+    return {
+        "market": benchmarks["market"],
+        "sectors": {s: benchmarks["sectors"][s]
+                    for s in sorted(sectors) if s in benchmarks["sectors"]},
+    }
 
 
 def max_drawdown(closes: list[float], sessions: int) -> float | None:
@@ -602,10 +477,6 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
     returns = {label: pct_change(closes, n) for label, n in WINDOWS.items()}
     returns["ytd"] = ytd_change(dated)
 
-    vol_1y = annualised_vol(closes, TRADING_DAYS_PER_YEAR)
-    mom_total, mom_scores = block_momentum(dated, mom_blocks(calendar))
-    blend_total, blend_scores = blend_momentum(dated, blend_windows(calendar))
-
     return {
         **{k: entry[k] for k in ("symbol", "name", "sector", "industry", "exchange", "logo")},
         "marketCap": entry["marketCap"],
@@ -614,21 +485,16 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
         "changePct": round((price / previous - 1) * 100, 2) if previous > 0 else 0.0,
         "asOf": dated[-1][0],
         "returns": {k: (round(v, 2) if v is not None else None) for k, v in returns.items()},
-        # The eleven terms the score sums, kept so it can be checked rather than
-        # taken on trust -- and so the app can show how evenly they fell.
-        "momBlocks": [_round(s, 3) for s in mom_scores],
         "volatility": {
             "30d": _round(annualised_vol(closes, 30)),
             "90d": _round(annualised_vol(closes, 90)),
-            "1y": _round(vol_1y),
+            "1y": _round(annualised_vol(closes, TRADING_DAYS_PER_YEAR)),
         },
         "maxDrawdown1y": _round(max_drawdown(closes, TRADING_DAYS_PER_YEAR)),
-        # The score itself is an absolute ratio. What the app shows beside a row
-        # is that ratio's standing among whatever rows are on screen, which only
-        # the app can know, so no scaled score is published here.
-        "mom": _round(mom_total, 3),
-        "blend": _round(blend_total, 3),
-        "blendWindows": [_round(v, 3) for v in blend_scores],
+        # No momentum score is published. The score is a function of the
+        # reader's formula settings, so the app computes it from `history` and
+        # the table's `benchmarks` -- publishing one configuration's number
+        # here would be a second, contradictory answer.
         "history": [round(c, 2) if c is not None else None for c in aligned],
         "firstSession": dated[0][0],
     }
@@ -685,6 +551,20 @@ def validate(snapshot: dict[str, Any], previous: dict[str, Any] | None,
     if caps != sorted(caps, reverse=True):
         errors.append("tickers are not ordered by market cap")
 
+    # The app's scoring cannot run without its factor series, and a benchmark
+    # out of step with the calendar would quietly residualise against the
+    # wrong days.
+    marks = snapshot.get("benchmarks") or {}
+    market = (marks.get("market") or {}).get("history") or []
+    if len(market) != len(calendar):
+        errors.append("market benchmark history length != calendar length")
+    elif any(c is None or c <= 0 for c in market):
+        errors.append("market benchmark has missing or non-positive closes")
+    for sector in sorted({t["sector"] for t in tickers}):
+        series = ((marks.get("sectors") or {}).get(sector) or {}).get("history") or []
+        if sector in SECTOR_BENCHMARKS and len(series) != len(calendar):
+            errors.append(f"benchmark for {sector}: history length != calendar length")
+
     # The data date must be a genuinely recent session, or we are republishing
     # stale numbers under a fresh timestamp.
     if calendar:
@@ -726,7 +606,7 @@ def slugify(sector: str) -> str:
 
 
 def assemble(tickers: list[dict[str, Any]], calendar: list[str],
-             title: str, scope: str) -> dict[str, Any]:
+             title: str, scope: str, benchmarks: dict[str, Any]) -> dict[str, Any]:
     """One published table: ranks are computed within it, not inherited.
 
     A sector file ranks its companies against each other, which is the only
@@ -736,19 +616,16 @@ def assemble(tickers: list[dict[str, Any]], calendar: list[str],
     rows = sorted(tickers, key=lambda t: t["marketCap"], reverse=True)
     rows = [dict(t) for t in rows]
     return {
-        "schema": 2,
+        "schema": 3,
         "generatedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         "dataDate": calendar[-1] if calendar else None,
         "source": "Financial Modeling Prep",
         "title": title,
         "scope": scope,
         "universeSize": len(rows),
-        "mom": mom_meta(calendar),
-        "blend": {
-            "windows": blend_windows(calendar),
-            "measure": ("mean daily log return / daily volatility over the same "
-                        "window, times sqrt(252), averaged over two windows"),
-        },
+        # The factor series the app's configurable score regresses against:
+        # the market benchmark plus one series per sector this table contains.
+        "benchmarks": benchmarks_for(benchmarks, {t["sector"] for t in rows}),
         "sessions": len(calendar),
         "dates": calendar,
         "tickers": rows,
@@ -761,6 +638,7 @@ def build_tables() -> tuple[dict[str, Any], dict[str, dict[str, Any]], list[str]
     shortlist = wanted(universe)
     histories = load_history([e["symbol"] for e in shortlist])
     calendar = build_calendar(histories)
+    benchmarks = load_benchmarks(calendar)
 
     metrics: list[dict[str, Any]] = []
     for entry in shortlist:
@@ -788,14 +666,14 @@ def build_tables() -> tuple[dict[str, Any], dict[str, dict[str, Any]], list[str]
         )
 
     overall = assemble(metrics[:TOP_N], calendar,
-                       f"Top {min(TOP_N, len(metrics))}", "all")
+                       f"Top {min(TOP_N, len(metrics))}", "all", benchmarks)
 
     sectors: dict[str, dict[str, Any]] = {}
     for sector in sorted({t["sector"] for t in metrics}):
         rows = [t for t in metrics if t["sector"] == sector][:SECTOR_N]
         if not rows:
             continue
-        sectors[sector] = assemble(rows, calendar, sector, "sector")
+        sectors[sector] = assemble(rows, calendar, sector, "sector", benchmarks)
 
     widest = max((len(s) for s in sectors), default=0)
     for sector, table in sorted(sectors.items(), key=lambda kv: -kv[1]["universeSize"]):
