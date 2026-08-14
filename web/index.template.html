@@ -439,10 +439,12 @@ function logoHtml(symbol, cls) {
    so a fix in one belongs in the other. */
 /* Three ways to order the table, and only three. Every other measure a company
    carries lives on its own screen, where there is room to say what it means.
-   MOM sorts on the raw ratio; what the row shows is that ratio's standing
-   among the rows on screen, which is a different number — see momScores. */
+   MOM shows the score itself — eleven daily-Sharpe terms summed, which reads
+   on its own once you know the field runs about -2 to +3. Its standing among
+   the rows on screen is still there, as the row number down the left and as
+   SCORE on the ticker screen. */
 const SORTS = [
-  { key: 'mom', label: 'MOM', short: 'MOM', better: 'high', value: (t) => t.mom, format: 'score' },
+  { key: 'mom', label: 'MOM', short: 'MOM', better: 'high', value: (t) => t.mom, format: 'ratio' },
   { key: 'marketCap', label: 'MKT CAP', short: 'CAP', better: 'high', value: (t) => t.marketCap, format: 'cap' },
   { key: 'vol', label: 'VOLATILITY', short: 'VOL', better: 'low', value: (t) => t.volatility['1y'], format: 'pct0' },
 ];
@@ -787,16 +789,15 @@ function rangeHtml(band) {
     `</span>`;
 }
 
-function rowHtml(t, position, sort, starred, score, band) {
+function rowHtml(t, position, sort, starred, band) {
   // Sorting by market cap makes the row number the rank, so the metric column
   // would just repeat it; show the day's move there instead.
   const metricIsCap = sort.format === 'cap';
-  // MOM sorts on the raw ratio but reads as its standing in the current view.
-  const metricValue = metricIsCap ? t.changePct
-    : sort.key === 'mom' ? (score ?? null)
-    : sort.value(t);
+  const metricValue = metricIsCap ? t.changePct : sort.value(t);
   const shown = formatMetric(metricIsCap ? 'pct' : sort.format, metricValue);
-  const colored = metricIsCap ? toneClass(metricValue) : '';
+  // Volatility is a magnitude and carries no sign worth colouring; the day's
+  // move and MOM both do.
+  const colored = metricIsCap || sort.key === 'mom' ? toneClass(metricValue) : '';
   const label = `${esc(t.symbol)}, ${esc(t.name)}. ${fmtPrice(t.price)}, ${fmtPct(t.changePct)} today.` +
     (band ? ` ${fmtPct(band.offHigh, 1)} from its 52 week high of ${fmtPrice(band.high.close)}.` : '');
   return `<button class="row${starred ? ' starred' : ''}${band ? ' row-tall' : ''}" ` +
@@ -851,10 +852,9 @@ function renderRanks() {
   }
 
   views.ranks = rows;
-  const scores = momScores(rows);
   const starred = new Set(state.watchlist);
   $('ranks-list').innerHTML = rows.length
-    ? rows.map((t, i) => rowHtml(t, i + 1, sort, starred.has(t.symbol), scores.get(t.symbol))).join('') +
+    ? rows.map((t, i) => rowHtml(t, i + 1, sort, starred.has(t.symbol))).join('') +
       `<div class="list-foot">Data date <span class="k">${esc(table.dataDate)}</span> · ` +
       `baked into this page ${esc(BUILT)} · dividend-adjusted closes from Financial Modeling Prep. ` +
       `This is the web edition — data refreshes when the page is republished, not on reload.</div>`
@@ -907,14 +907,13 @@ function renderWatch() {
   $('watch-col-metric').textContent = sort.label;
 
   views.watchlist = rows;
-  const scores = momScores(rows);
   $('watch-list').innerHTML = rows.length
     ? rows.map((t, i) => {
         // MOM stops 20 sessions back, so the watchlist carries the piece it
         // cannot see: where this close sits in the year's range.
         const key = tableKeyOf.get(t.symbol);
         const band = range52(t, DATA.tables[key].dates);
-        const html = rowHtml(t, i + 1, sort, true, scores.get(t.symbol), band);
+        const html = rowHtml(t, i + 1, sort, true, band);
         return html.replace('data-sym="', `data-table="${esc(key)}" data-sym="`);
       }).join('')
     : '<div class="empty"><div class="empty-title">NOTHING TRACKED YET</div>' +
