@@ -388,19 +388,62 @@ function logoHtml(symbol, cls) {
 /* ============================================================ ported model
    Direct ports of app/src/data.js and theme.js — same names, same semantics,
    so a fix in one belongs in the other. */
+/* Three ways to order the table, and only three. Every other measure a company
+   carries lives on its own screen, where there is room to say what it means.
+   MOM sorts on the raw ratio; what the row shows is that ratio's standing
+   among the rows on screen, which is a different number — see momScores. */
 const SORTS = [
-  { key: 'marketCap', label: 'MKT CAP', short: 'CAP', rank: 'marketCap', better: 'high', value: (t) => t.marketCap, format: 'cap' },
-  { key: 'change', label: '1 DAY', short: '1D', rank: 'change', better: 'high', value: (t) => t.changePct, format: 'pct' },
-  { key: 'r1w', label: '1 WEEK', short: '1W', rank: 'return_1w', better: 'high', value: (t) => t.returns['1w'], format: 'pct' },
-  { key: 'r1m', label: '1 MONTH', short: '1M', rank: 'return_1m', better: 'high', value: (t) => t.returns['1m'], format: 'pct' },
-  { key: 'r3m', label: '3 MONTH', short: '3M', rank: 'return_3m', better: 'high', value: (t) => t.returns['3m'], format: 'pct' },
-  { key: 'r6m', label: '6 MONTH', short: '6M', rank: 'return_6m', better: 'high', value: (t) => t.returns['6m'], format: 'pct' },
-  { key: 'r1y', label: '1 YEAR', short: '1Y', rank: 'return_1y', better: 'high', value: (t) => t.returns['1y'], format: 'pct' },
-  { key: 'momentum', label: 'MOMENTUM', short: 'MOM', rank: 'momentum', better: 'high', value: (t) => t.momentumScore, format: 'score' },
-  { key: 'risk', label: 'RISK-ADJ', short: 'R/R', rank: 'riskAdjusted', better: 'high', value: (t) => t.riskAdjusted1y, format: 'ratio' },
-  { key: 'vol', label: 'VOLATILITY', short: 'VOL', rank: 'volatility', better: 'low', value: (t) => t.volatility['1y'], format: 'pct0' },
+  { key: 'mom', label: 'MOM', short: 'MOM', better: 'high', value: (t) => t.mom, format: 'score' },
+  { key: 'marketCap', label: 'MKT CAP', short: 'CAP', better: 'high', value: (t) => t.marketCap, format: 'cap' },
+  { key: 'vol', label: 'VOLATILITY', short: 'VOL', better: 'low', value: (t) => t.volatility['1y'], format: 'pct0' },
 ];
 const sortByKey = (key) => SORTS.find((s) => s.key === key) || SORTS[0];
+
+/**
+ * MOM as a 0–100 standing within exactly the rows handed in.
+ *
+ * The published score is an absolute ratio, which is the right thing to store
+ * and the wrong thing to read: 0.34 says nothing until you know what the field
+ * looks like. So the number beside a row is its percentile among the rows on
+ * screen — filter to healthcare and every score is recomputed against those
+ * hundred, because that is now the field. It also disarms the outliers: one
+ * 30-bagger sitting at a ratio of 20 would flatten a linear scale, but as a
+ * percentile it simply takes the top slot and leaves the rest spread out.
+ */
+function momScores(rows) {
+  const scored = rows
+    .filter((t) => t.mom !== null && t.mom !== undefined)
+    .sort((a, b) => b.mom - a.mom);
+  const out = new Map();
+  const last = scored.length - 1;
+  // Floored rather than rounded, so 100 belongs to the leader alone. Rounding
+  // hands it to anything within half a place, and a table with two number ones
+  // reads as a bug.
+  scored.forEach((t, i) => out.set(t.symbol, last > 0 ? Math.floor(100 * (1 - i / last)) : 100));
+  return out;
+}
+
+/** Every placing for one symbol, measured against the rows on screen. */
+function ranksIn(rows, symbol) {
+  const place = (extract, descending) => {
+    const scored = rows.filter((t) => {
+      const v = extract(t);
+      return v !== null && v !== undefined;
+    });
+    scored.sort((a, b) => (descending ? extract(b) - extract(a) : extract(a) - extract(b)));
+    const i = scored.findIndex((t) => t.symbol === symbol);
+    return i < 0 ? null : i + 1;
+  };
+  const byReturn = (key) => place((t) => t.returns[key], true);
+  return {
+    count: rows.length,
+    marketCap: place((t) => t.marketCap, true),
+    mom: place((t) => t.mom, true),
+    volatility: place((t) => t.volatility['1y'], false),
+    '1m': byReturn('1m'), '3m': byReturn('3m'), '6m': byReturn('6m'),
+    ytd: byReturn('ytd'), '1y': byReturn('1y'),
+  };
+}
 
 const RANGES = [
   { key: '1M', sessions: 21 }, { key: '3M', sessions: 63 }, { key: '6M', sessions: 126 },
@@ -495,10 +538,9 @@ const fmtNum = (n, d = 2) => (n === null || n === undefined ? '—' : n.toFixed(
 const fmtRank = (n) => (n === null || n === undefined ? '—' : `#${n}`);
 const toneClass = (v) => (v === null || v === undefined || v === 0 ? 'flat' : v > 0 ? 'up' : 'dn');
 const missingReason = (key) => ({
-  momentum: 'Needs ~13 months', '2y': 'Needs 2 years', '1y': 'Needs 1 year',
-  riskAdjusted: 'Needs 1 year', maxDrawdown: 'Needs 1 year', '9m': 'Needs 9 months',
-  '6m': 'Needs 6 months', '90d': 'Needs 6 months', '3m': 'Needs 3 months',
-  ytd: 'Listed this year',
+  mom: 'Needs ~13 months', '2y': 'Needs 2 years', '1y': 'Needs 1 year',
+  maxDrawdown: 'Needs 1 year', '6m': 'Needs 6 months', '90d': 'Needs 6 months',
+  '3m': 'Needs 3 months', ytd: 'Listed this year',
 }[key] || 'Not enough history');
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -526,20 +568,28 @@ const store = {
 };
 
 /* ================================================================== state */
+/* The app always opens on the same view — the Top 300, no sector filter, best
+   momentum first — rather than resuming wherever it was last left. Only the
+   watchlist is remembered, because that is the reader's data rather than a
+   position in the app. */
 const state = {
   tab: 'ranks',
-  universeKey: store.read('universe', 'all'),
-  sortKey: store.read('sort', 'marketCap'),
+  universeKey: 'all',
+  sortKey: 'mom',
   direction: 'desc',
   query: '', sector: 'All', industry: 'All',
-  watchSort: 'change',
+  watchSort: 'mom',
   watchlist: store.read('watchlist', []),
   hasScrubbed: store.read('scrubbed', false),
-  open: null,           // { symbol, tableKey } or null
+  open: null,           // { symbol, tableKey, tab } or null
   range: '1Y',
   sheet: null,          // 'universe' | 'cut' | null
 };
 if (!DATA.tables[state.universeKey]) state.universeKey = DATA.index.universes[0].key;
+
+/* The rows each tab currently has on screen, which is what every score and
+   placing in the app is measured against. */
+const views = { ranks: [], watchlist: [] };
 
 const SPARK_SESSIONS = 90;
 const SPARK_POINTS = 24;
@@ -577,11 +627,16 @@ function sparkSvg(points, change) {
 }
 
 /* ==================================================================== rows */
-function rowHtml(t, position, sort, starred) {
+function rowHtml(t, position, sort, starred, score) {
+  // Sorting by market cap makes the row number the rank, so the metric column
+  // would just repeat it; show the day's move there instead.
   const metricIsCap = sort.format === 'cap';
-  const metricValue = metricIsCap ? t.changePct : sort.value(t);
+  // MOM sorts on the raw ratio but reads as its standing in the current view.
+  const metricValue = metricIsCap ? t.changePct
+    : sort.key === 'mom' ? (score ?? null)
+    : sort.value(t);
   const shown = formatMetric(metricIsCap ? 'pct' : sort.format, metricValue);
-  const colored = metricIsCap || sort.format === 'pct' ? toneClass(metricValue) : '';
+  const colored = metricIsCap ? toneClass(metricValue) : '';
   return `<button class="row${starred ? ' starred' : ''}" data-sym="${esc(t.symbol)}" ` +
     `aria-label="${esc(t.symbol)}, ${esc(t.name)}. ${fmtPrice(t.price)}, ${fmtPct(t.changePct)} today.">` +
     `<span class="pos">${position === null || position === undefined ? '—' : position}</span>` +
@@ -631,9 +686,11 @@ function renderRanks() {
       `${rows.length === 1 ? 'result' : 'results'}`;
   }
 
+  views.ranks = rows;
+  const scores = momScores(rows);
   const starred = new Set(state.watchlist);
   $('ranks-list').innerHTML = rows.length
-    ? rows.map((t) => rowHtml(t, t.ranks[sort.rank] ?? null, sort, starred.has(t.symbol))).join('') +
+    ? rows.map((t, i) => rowHtml(t, i + 1, sort, starred.has(t.symbol), scores.get(t.symbol))).join('') +
       `<div class="list-foot">Data date <span class="k">${esc(table.dataDate)}</span> · ` +
       `baked into this page ${esc(BUILT)} · dividend-adjusted closes from Financial Modeling Prep. ` +
       `This is the web edition — data refreshes when the page is republished, not on reload.</div>`
@@ -685,9 +742,11 @@ function renderWatch() {
   $('watch-columns').hidden = !list.length;
   $('watch-col-metric').textContent = sort.label;
 
+  views.watchlist = rows;
+  const scores = momScores(rows);
   $('watch-list').innerHTML = rows.length
     ? rows.map((t, i) => {
-        const html = rowHtml(t, i + 1, sort, true);
+        const html = rowHtml(t, i + 1, sort, true, scores.get(t.symbol));
         return html.replace('data-sym="', `data-table="${esc(tableKeyOf.get(t.symbol))}" data-sym="`);
       }).join('')
     : '<div class="empty"><div class="empty-title">NOTHING TRACKED YET</div>' +
@@ -697,7 +756,7 @@ function renderWatch() {
 
 /* ============================================================ ticker view */
 const RETURN_ROWS = [['1w', '1 WEEK'], ['1m', '1 MONTH'], ['3m', '3 MONTH'], ['6m', '6 MONTH'], ['ytd', 'YTD'], ['1y', '1 YEAR'], ['2y', '2 YEAR']];
-const MOMENTUM_ROWS = [['3m', '3 MONTH'], ['6m', '6 MONTH'], ['9m', '9 MONTH'], ['12m', '12 MONTH']];
+const RANK_ROWS = [['1m', '1 MONTH'], ['3m', '3 MONTH'], ['6m', '6 MONTH'], ['ytd', 'YTD'], ['1y', '1 YEAR']];
 
 const stat = (label, value, cls = '', width = '', reason = '') =>
   `<div class="stat ${width}" ${value === '—' && reason ? `title="${esc(reason)}"` : ''}>` +
@@ -710,12 +769,18 @@ function renderTicker() {
   const t = tickersOf(tableKey).find((x) => x.symbol === symbol);
   if (!t) return;
   const starred = state.watchlist.includes(symbol);
-  const scope = universeLabel(table);
-  const skip = table.skip || {};
-  const returnSkips = skip.returns || {};
-  const momentumSkips = skip.momentum || (table.momentum || {}).skips || {};
-  const anySkip = Object.values(returnSkips).some((n) => n > 0);
-  const suffix = (key) => (returnSkips[key] > 0 ? ` −${returnSkips[key]}D` : '');
+
+  // Every placing here is measured against the rows the reader currently has
+  // on screen, filters and all — not against the whole universe.
+  const rows = views[state.open.tab] || [];
+  const rank = ranksIn(rows, symbol);
+  const score = momScores(rows).get(symbol);
+  const scope = state.open.tab === 'watchlist'
+    ? `WATCHLIST ${rank.count}`
+    : rows.length === table.tickers.length
+      ? universeLabel(table)
+      : `THIS VIEW ${rank.count}`;
+  const windows = t.momWindows || {};
 
   const sessions = (RANGES.find((r) => r.key === state.range) || RANGES[4]).sessions;
   const points = seriesFor(t, table.dates, sessions);
@@ -752,11 +817,10 @@ function renderTicker() {
 
     <div class="section-title">RETURNS</div>
     <div class="grid">${RETURN_ROWS.map(([key, label]) =>
-      stat(`${label}${suffix(key)}`, fmtPct(t.returns[key]), toneClass(t.returns[key]), '', missingReason(key))).join('')}
+      stat(label, fmtPct(t.returns[key]), toneClass(t.returns[key]), '', missingReason(key))).join('')}
     </div>
-    ${anySkip ? `<p class="note">−nD means the window stops n sessions short of today. Short-term moves tend to
-      reverse rather than persist, so every window long enough to afford it leaves its most recent stretch
-      out — the same rule everywhere, scaled to each window's length.</p>` : ''}
+    <p class="note">Every window runs to the last close — a 3 month return is the plain move over three
+    months, nothing left off either end.</p>
 
     <div class="section-title">RISK</div>
     <div class="grid">
@@ -764,7 +828,6 @@ function renderTicker() {
       ${stat('VOL 90D', fmtMagnitude(t.volatility['90d']), '', '', missingReason('90d'))}
       ${stat('VOL 1Y', fmtMagnitude(t.volatility['1y']), '', '', missingReason('1y'))}
       ${stat('MAX DD 1Y', fmtMagnitude(t.maxDrawdown1y), t.maxDrawdown1y === null ? '' : 'dn', '', missingReason('maxDrawdown'))}
-      ${stat('RETURN/RISK', fmtNum(t.riskAdjusted1y, 2), '', '', missingReason('riskAdjusted'))}
     </div>
     <details><summary>HOW RISK IS MEASURED ›</summary>
       <p class="prose">Volatility is the standard deviation of daily log returns over the window, annualised.
@@ -773,57 +836,52 @@ function renderTicker() {
       <p class="prose">Max drawdown is the deepest peak-to-trough fall within the last year, measured on
       closing prices. It answers what holding through the worst stretch would have felt like, which an
       annual return on its own hides.</p>
-      <p class="prose">Return/risk divides the 1-year return by 1-year volatility: how much movement was
-      rewarded per unit of movement endured. There is no risk-free rate in it, so it compares these tickers
-      against each other rather than being a Sharpe ratio.</p>
     </details>
 
-    <div class="section-title">MOMENTUM</div>
+    <div class="section-title">MOM</div>
     <div class="grid">
-      ${stat('SCORE', fmtNum(t.momentumScore, 0), 'up', 'half', missingReason('momentum'))}
-      ${stat(`RANK IN ${esc(scope)}`, fmtRank(t.ranks.momentum), '', 'half', missingReason('momentum'))}
+      ${stat(`SCORE IN ${esc(scope)}`, score === undefined ? '—' : fmtNum(score, 0), 'up', 'half', missingReason('mom'))}
+      ${stat('RATIO', fmtNum(t.mom, 2), '', 'half', missingReason('mom'))}
     </div>
     <div class="windows">
-      <div class="window-row head"><span>WINDOW</span><span>SKIPPED</span><span class="w-value">RETURN</span></div>
-      ${MOMENTUM_ROWS.map(([key, label]) => {
-        const s = momentumSkips[key];
-        const value = (t.momentumReturns || {})[key];
-        return `<div class="window-row"><span class="w-label">${label}</span>` +
-          `<span class="w-skip">${s === undefined ? '—' : s === 0 ? 'none' : `last ${s}d`}</span>` +
-          `<span class="w-value ${toneClass(value)}">${fmtPct(value)}</span></div>`;
+      <div class="window-row head"><span>WINDOW</span><span>SKIPS</span><span class="w-value">RETURN / VOL</span></div>
+      ${(((table.mom || {}).windows) || []).map(({ sessions, skip }) => {
+        const value = windows[`${sessions}-${skip}`];
+        return `<div class="window-row"><span class="w-label">${sessions} SESSIONS</span>` +
+          `<span class="w-skip">last ${skip}d</span>` +
+          `<span class="w-value ${toneClass(value)}">${fmtNum(value, 2)}</span></div>`;
       }).join('')}
     </div>
-    <details><summary>HOW MOMENTUM WORKS ›</summary>
-      <p class="prose">Four returns are measured for every company: 3, 6, 9 and 12 months, each stopping
-      short of today rather than running to the last close.</p>
-      <p class="prose">The skip scales with the window at 20 sessions per 250, so the 12-month figure leaves
-      out the last 20 sessions and the 3-month one only the last 5. A single fixed month would take a
-      twelfth off the yearly window but a third off the quarterly one — a far heavier hand on the short end
-      than the long.</p>
-      <p class="prose">This ticker is ranked against the other ${table.universeSize - 1} in ${esc(table.title)}
-      on each of those four windows, and the four placings are averaged and rescaled so 100 is the strongest
-      of the ${table.universeSize}. A high score means winning across every timeframe, not spiking in one.</p>
-      <p class="prose">Every table scores itself, so the same company carries a different score in the
-      Top 300 than it does among its own sector — the field it is being measured against is not the same
-      field.</p>
-      <p class="prose">It stays blank until a company has traded about 13 months — the 12-month window plus
-      the skipped one. Scoring on whichever windows happened to exist would be a different measure wearing
-      the same name.</p>
+    <details><summary>HOW MOM WORKS ›</summary>
+      <p class="prose">Two windows are measured: the last 250 trading sessions stopping 20 short of today,
+      and the last 125 stopping 10 short. For each one, the return earned over the window is annualised and
+      divided by the annualised volatility of that same stretch — the gain, priced in the turbulence it
+      cost. The two ratios are averaged, and that average is MOM.</p>
+      <p class="prose">Each window stops short of today because very short-term moves tend to reverse
+      rather than persist, so a window running right to the last close measures noise sitting on top of the
+      trend. Two windows rather than one because a company strong over both the year and the half year is
+      trending; one that wins on a single window is usually carrying a spike.</p>
+      <p class="prose">Dividing by volatility is what separates this from a return column. A stock up 60%
+      on a wild ride and one up 30% grinding steadily upward can land at the same ratio — MOM asks what the
+      climb cost, not only how far it went.</p>
+      <p class="prose">The ratio above is absolute and never changes. The score beside it is the ratio's
+      standing among the ${rank.count} rows currently on screen, where 100 is the strongest of them. Filter
+      the list and every score is recomputed, because the field being measured against has changed.</p>
+      <p class="prose">It stays blank until a company has traded about 13 months — the 250-session window
+      plus the sessions it skips. Averaging whichever window happened to exist would be a different measure
+      wearing the same name.</p>
     </details>
 
     <div class="section-title">RANK IN ${esc(scope)}</div>
     <div class="grid">
-      ${stat('MARKET CAP', fmtRank(t.ranks.marketCap), 'up')}
-      ${stat('1 MONTH', fmtRank(t.ranks.return_1m))}
-      ${stat('3 MONTH', fmtRank(t.ranks.return_3m))}
-      ${stat('6 MONTH', fmtRank(t.ranks.return_6m))}
-      ${stat('YTD', fmtRank(t.ranks.return_ytd))}
-      ${stat('1 YEAR', fmtRank(t.ranks.return_1y))}
-      ${stat('RETURN/RISK', fmtRank(t.ranks.riskAdjusted))}
-      ${stat('LOW VOL', fmtRank(t.ranks.volatility))}
+      ${stat('MOM', fmtRank(rank.mom), 'up')}
+      ${stat('MARKET CAP', fmtRank(rank.marketCap))}
+      ${stat('LOW VOL', fmtRank(rank.volatility))}
+      ${RANK_ROWS.map(([key, label]) => stat(label, fmtRank(rank[key]))).join('')}
     </div>
-    <p class="note">Placings run 1 to ${table.universeSize} within ${esc(table.title)}${
-      table.scope === 'sector' ? ' — this company against its own sector, not the whole market.' : '.'}</p>
+    <p class="note">Placings run 1 to ${rank.count}, measured against the rows on screen behind this
+    one${rows.length === table.tickers.length ? '.' : ' — the filter you have applied, not the whole table.'}
+    Return placings use the plain windows above, with nothing left off.</p>
     <p class="footnote">Dividend-adjusted closes, ${esc(t.firstSession)} to ${esc(t.asOf)}.</p>`;
 
   mountChart(points);
@@ -947,7 +1005,7 @@ function pickSheet(value) {
   const table = DATA.tables[state.universeKey];
   if (state.sheet === 'universe') {
     if (value !== state.universeKey) {
-      state.universeKey = value; store.write('universe', value);
+      state.universeKey = value;
       state.sector = 'All'; state.industry = 'All';
       renderRanks(); renderWatch();
       $('ranks-list').scrollTop = 0;
@@ -975,7 +1033,9 @@ function openTicker(symbol, tableKey) {
     : tickersOf(state.universeKey).some((t) => t.symbol === symbol) ? state.universeKey
     : DATA.index.universes.map((u) => u.key).find((k) => tickersOf(k).some((t) => t.symbol === symbol));
   if (!key) return;
-  state.open = { symbol, tableKey: key };
+  // Which tab it was opened from decides which rows its placings are measured
+  // against — the filtered Ranks list, or the watchlist.
+  state.open = { symbol, tableKey: key, tab: state.tab };
   state.range = '1Y';
   renderTicker();
   if (!location.hash.slice(1)) history.pushState({ ticker: symbol }, '', `#${symbol}`);
@@ -1045,7 +1105,7 @@ function listHandler(e) {
   if (chip) {
     const key = chip.dataset.sort;
     if (key === state.sortKey) state.direction = state.direction === 'desc' ? 'asc' : 'desc';
-    else { state.sortKey = key; state.direction = 'desc'; store.write('sort', key); }
+    else { state.sortKey = key; state.direction = 'desc'; }
     renderRanks(); return;
   }
   const wchip = e.target.closest('[data-wsort]');

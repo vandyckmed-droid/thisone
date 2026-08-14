@@ -11,7 +11,7 @@ Pipeline stages
 1. universe   -- screen for eligible US common stocks and drop share-class and
                  debt/preferred duplicates
 2. prices     -- pull ~2 years of dividend-adjusted daily closes per ticker
-3. metrics    -- returns, annualised volatility, drawdown, rankings
+3. metrics    -- returns, annualised volatility, drawdown, momentum
 4. validate   -- refuse to publish a snapshot that fails any sanity check
 5. write      -- one table of the largest TOP_N overall and one of the largest
                  SECTOR_N in each sector, every file replaced atomically so a
@@ -27,8 +27,6 @@ SECTOR_N                size of each sector table (default 100)
 MIN_MARKET_CAP          screen floor (default 250M -- low enough that the
                         smaller sectors can reach SECTOR_N)
 MIN_DOLLAR_VOLUME       average daily traded value floor (default 3M)
-MOMENTUM_SKIP_RATIO     share of every return window left off its recent end
-                        (default 0.08 = 20 sessions per 250; 0 disables it)
 HISTORY_DAYS            calendar days of history to request (default 850)
 DATA_DIR                where to write (default data/)
 MAX_WORKERS             concurrent API requests (default 8)
@@ -85,24 +83,21 @@ MIN_CALENDAR_SESSIONS = 200
 TRADING_DAYS_PER_YEAR = 252
 WINDOWS = {"1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252, "2y": 504}
 
-# Every return window ignores the most recent stretch of itself, because very
-# short-term moves tend to reverse rather than persist, so a window running
-# right up to today measures noise sitting on top of the trend.
+# The plain return windows above run right up to the last close. A "3 month
+# return" on the table means exactly that, so it can be checked against any
+# other source, and the skipping that momentum needs lives inside momentum.
 #
-# The skip scales with the window rather than being one fixed month for all of
-# them: 20 sessions off a 250-session year, so 10 off six months and 5 off
-# three. A fixed month takes a twelfth off the yearly window but a third off
-# the quarterly one, which is a far heavier hand on the short end than the
-# long. Proportional skipping treats every horizon the same way.
+# MOM is that skipping, and it is a risk-adjusted measure rather than a blend
+# of raw returns: over each window, the annualised return divided by the
+# annualised volatility of the same window, and the two averaged.
 #
-# It is all or nothing. Skipping inside momentum but not in the returns table
-# would mean two numbers labelled "6 month" on one screen measuring different
-# things, so the ratio governs every window or none of them.
-SKIP_RATIO = float(os.environ.get("MOMENTUM_SKIP_RATIO", 20 / 250))
-# Below a quarter there is too little window left to be worth measuring once a
-# proportional bite is taken out of it, so short windows skip nothing at all.
-MIN_SKIP_WINDOW = 63
-MOMENTUM_WINDOWS = {"3m": 63, "6m": 126, "9m": 189, "12m": 252}
+# Each window stops short of today -- 20 sessions off the yearly one, 10 off
+# the half-yearly -- because very short-term moves tend to reverse rather than
+# persist, so a window running right to the last close measures noise sitting
+# on top of the trend. Two windows rather than one because a stock that is
+# strong over the year and the half year is trending; one that wins on a
+# single window is usually carrying a spike.
+MOM_WINDOWS = ((250, 20), (125, 10))
 
 # Names that betray a note, bond, preferred or depositary line rather than a
 # common share. FMP reports these with the *parent company's* market cap.
@@ -359,8 +354,8 @@ def align(series: dict[str, float], calendar: list[str]) -> list[float | None]:
 # --------------------------------------------------------------------------
 
 def pct_change(closes: list[float], sessions: int) -> float | None:
-    """Return over `sessions`, stopping short of today by this window's skip."""
-    return pct_change_skip(closes, sessions, window_skip(sessions))
+    """Plain return over `sessions`, measured to the last close."""
+    return pct_change_skip(closes, sessions, 0)
 
 
 def _window(closes: list[float], sessions: int) -> list[float] | None:
@@ -373,13 +368,6 @@ def _window(closes: list[float], sessions: int) -> list[float] | None:
     if len(window) < max(20, int(sessions * 0.6)):
         return None
     return window
-
-
-def window_skip(sessions: int) -> int:
-    """Sessions to leave off the recent end of a `sessions`-long window."""
-    if sessions < MIN_SKIP_WINDOW or SKIP_RATIO <= 0:
-        return 0
-    return round(sessions * SKIP_RATIO)
 
 
 def pct_change_skip(closes: list[float], sessions: int, skip: int) -> float | None:
@@ -403,6 +391,47 @@ def annualised_vol(closes: list[float], sessions: int) -> float | None:
     return statistics.pstdev(rets) * math.sqrt(TRADING_DAYS_PER_YEAR) * 100
 
 
+def window_ratio(closes: list[float], sessions: int, skip: int) -> float | None:
+    """Annualised return over one MOM window, divided by its own volatility.
+
+    The window spans from `sessions` ago to `skip` ago, so both halves of the
+    ratio describe the same stretch of trading -- the return earned over it and
+    the turbulence endured for that return. Annualising both keeps windows of
+    different lengths on one scale, so the 250-20 and 125-10 figures can be
+    averaged without one of them quietly dominating.
+    """
+    if len(closes) < sessions + 1:
+        return None
+    window = closes[-(sessions + 1):len(closes) - skip]
+    if len(window) < 20 or window[0] <= 0 or window[-1] <= 0:
+        return None
+
+    span = len(window) - 1                       # daily returns in the window
+    growth = window[-1] / window[0]
+    annual_return = growth ** (TRADING_DAYS_PER_YEAR / span) - 1
+
+    rets = [math.log(b / a) for a, b in zip(window, window[1:]) if a > 0 and b > 0]
+    if len(rets) < 19:
+        return None
+    annual_vol = statistics.pstdev(rets) * math.sqrt(TRADING_DAYS_PER_YEAR)
+    if annual_vol <= 0:
+        return None
+    return annual_return / annual_vol
+
+
+def momentum(closes: list[float]) -> float | None:
+    """MOM: the average of the two windows' return-per-unit-of-volatility.
+
+    Both windows or nothing. Averaging whichever happened to be available would
+    be a different statistic wearing the same name, so a company without the
+    full 250 sessions simply has no momentum yet.
+    """
+    ratios = [window_ratio(closes, n, skip) for n, skip in MOM_WINDOWS]
+    if any(r is None for r in ratios):
+        return None
+    return sum(ratios) / len(ratios)
+
+
 def max_drawdown(closes: list[float], sessions: int) -> float | None:
     window = _window(closes, sessions)
     if window is None:
@@ -416,23 +445,14 @@ def max_drawdown(closes: list[float], sessions: int) -> float | None:
 
 
 def ytd_change(dated: list[tuple[str, float]]) -> float | None:
-    """From the final close of the previous calendar year, skip applied.
-
-    The skip is sized off however many sessions the year has run so far, so
-    early January skips nothing and a full year skips its twentieth.
-    """
+    """From the final close of the previous calendar year to the last close."""
     if not dated:
         return None
     this_year = dated[-1][0][:4]
     base = [close for day, close in dated if day[:4] < this_year]
     if not base or base[-1] <= 0:
         return None
-
-    skip = window_skip(len(dated) - len(base))
-    end = len(dated) - 1 - skip
-    if end < len(base):          # the skip swallowed the whole year so far
-        return None
-    return (dated[end][1] / base[-1] - 1) * 100
+    return (dated[-1][1] / base[-1] - 1) * 100
 
 
 def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
@@ -449,7 +469,6 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
     returns["ytd"] = ytd_change(dated)
 
     vol_1y = annualised_vol(closes, TRADING_DAYS_PER_YEAR)
-    ret_1y = returns.get("1y")
 
     return {
         **{k: entry[k] for k in ("symbol", "name", "sector", "industry", "exchange", "logo")},
@@ -459,11 +478,11 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
         "changePct": round((price / previous - 1) * 100, 2) if previous > 0 else 0.0,
         "asOf": dated[-1][0],
         "returns": {k: (round(v, 2) if v is not None else None) for k, v in returns.items()},
-        # The skip-a-month windows momentum is built from, kept in the snapshot
-        # so the score can be checked rather than taken on trust.
-        "momentumReturns": {
-            label: _round(pct_change_skip(closes, n, window_skip(n)))
-            for label, n in MOMENTUM_WINDOWS.items()
+        # Each MOM window's own ratio, kept so the score can be checked rather
+        # than taken on trust.
+        "momWindows": {
+            f"{n}-{skip}": _round(window_ratio(closes, n, skip), 3)
+            for n, skip in MOM_WINDOWS
         },
         "volatility": {
             "30d": _round(annualised_vol(closes, 30)),
@@ -471,9 +490,10 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
             "1y": _round(vol_1y),
         },
         "maxDrawdown1y": _round(max_drawdown(closes, TRADING_DAYS_PER_YEAR)),
-        # Return per unit of risk -- the cheap Sharpe stand-in, no risk-free rate.
-        "riskAdjusted1y": (round(ret_1y / vol_1y, 3)
-                           if ret_1y is not None and vol_1y else None),
+        # The score itself is an absolute ratio. What the app shows beside a row
+        # is that ratio's standing among whatever rows are on screen, which only
+        # the app can know, so no scaled score is published here.
+        "mom": _round(momentum(closes), 3),
         "history": [round(c, 2) if c is not None else None for c in aligned],
         "firstSession": dated[0][0],
     }
@@ -483,56 +503,10 @@ def _round(value: float | None, digits: int = 2) -> float | None:
     return round(value, digits) if value is not None else None
 
 
-def apply_rankings(tickers: list[dict[str, Any]]) -> None:
-    """Attach 1-based ranks; rank 1 is always the most desirable end."""
-    def rank_by(key: str, extract, *, descending: bool) -> None:
-        scored = [t for t in tickers if extract(t) is not None]
-        scored.sort(key=extract, reverse=descending)
-        for position, ticker in enumerate(scored, start=1):
-            ticker["ranks"][key] = position
-        for ticker in tickers:
-            ticker["ranks"].setdefault(key, None)
-
-    for ticker in tickers:
-        ticker["ranks"] = {}
-
-    rank_by("marketCap", lambda t: t["marketCap"], descending=True)
-    # The day's move is a sort column too, so it needs a global rank like the
-    # rest -- otherwise that column has no honest number to put beside a row
-    # once a filter is applied.
-    rank_by("change", lambda t: t["changePct"], descending=True)
-    for horizon in ("1w", "1m", "3m", "6m", "ytd", "1y", "2y"):
-        rank_by(f"return_{horizon}", lambda t, h=horizon: t["returns"].get(h), descending=True)
-    rank_by("volatility", lambda t: t["volatility"]["1y"], descending=False)
-    rank_by("riskAdjusted", lambda t: t["riskAdjusted1y"], descending=True)
-
-    # Momentum blends the four skip-a-month horizons by average percentile.
-    # These per-horizon placings are not published as ranks of their own: the
-    # ranks the app shows are plain trailing returns, and two sets of
-    # near-identical numbers would invite exactly the confusion the score is
-    # meant to resolve.
-    total = len(tickers)
-    horizons = list(MOMENTUM_WINDOWS)
-    placings: dict[str, dict[str, int]] = {t["symbol"]: {} for t in tickers}
-    for horizon in horizons:
-        scored = [t for t in tickers if t["momentumReturns"].get(horizon) is not None]
-        scored.sort(key=lambda t: t["momentumReturns"][horizon], reverse=True)
-        for position, ticker in enumerate(scored, start=1):
-            placings[ticker["symbol"]][horizon] = position
-
-    for ticker in tickers:
-        places = [placings[ticker["symbol"]].get(h) for h in horizons]
-        # The score is defined as a blend of all four horizons; computing it
-        # from whichever happen to be available would be a different statistic
-        # wearing the same name. A ticker without ~13 months of history -- the
-        # 12-month window plus the skipped month -- simply has no momentum yet.
-        if any(p is None for p in places):
-            ticker["momentumScore"] = None
-            continue
-        average = sum(places) / len(places)
-        ticker["momentumScore"] = round(100 * (1 - (average - 1) / max(total - 1, 1)), 1)
-
-    rank_by("momentum", lambda t: t["momentumScore"], descending=True)
+# Ranks are deliberately not published. Every placing the app shows is measured
+# against the rows actually on screen -- filter the Top 300 down to healthcare
+# and #1 means the best of those, not the best of three hundred -- and a rank
+# frozen at build time could only ever answer the unfiltered question.
 
 
 # --------------------------------------------------------------------------
@@ -571,8 +545,6 @@ def validate(snapshot: dict[str, Any], previous: dict[str, Any] | None,
             errors.append(f"{symbol}: implausible daily move {ticker['changePct']}%")
         if len(ticker.get("history") or []) != len(calendar):
             errors.append(f"{symbol}: history length != calendar length")
-        if ticker["ranks"].get("marketCap") is None:
-            errors.append(f"{symbol}: missing market-cap rank")
 
     caps = [t["marketCap"] for t in tickers]
     if caps != sorted(caps, reverse=True):
@@ -628,7 +600,6 @@ def assemble(tickers: list[dict[str, Any]], calendar: list[str],
     """
     rows = sorted(tickers, key=lambda t: t["marketCap"], reverse=True)
     rows = [dict(t) for t in rows]
-    apply_rankings(rows)
     return {
         "schema": 2,
         "generatedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -637,19 +608,10 @@ def assemble(tickers: list[dict[str, Any]], calendar: list[str],
         "title": title,
         "scope": scope,
         "universeSize": len(rows),
-        "skip": {
-            "ratio": round(SKIP_RATIO, 4),
-            "minWindow": MIN_SKIP_WINDOW,
-            "returns": {
-                **{k: window_skip(n) for k, n in WINDOWS.items()},
-                "ytd": window_skip(sum(1 for d in calendar if calendar and d[:4] == calendar[-1][:4])),
-            },
-            "momentum": {k: window_skip(n) for k, n in MOMENTUM_WINDOWS.items()},
-        },
-        "momentum": {
-            "windows": dict(MOMENTUM_WINDOWS),
-            "skips": {k: window_skip(n) for k, n in MOMENTUM_WINDOWS.items()},
-            "skipRatio": round(SKIP_RATIO, 4),
+        "mom": {
+            # Sessions in each window and how many it stops short of today.
+            "windows": [{"sessions": n, "skip": skip} for n, skip in MOM_WINDOWS],
+            "measure": "annualised return / annualised volatility, averaged",
         },
         "sessions": len(calendar),
         "dates": calendar,
