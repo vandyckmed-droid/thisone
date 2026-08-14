@@ -98,6 +98,19 @@
   .select-btn.active { color: var(--acid); border-color: var(--acid); background: var(--acid-glow); }
 
   /* -------------------------------------------------------------- chips */
+  /* Context rather than a control, so it wraps to show the whole make-up at
+     once instead of scrolling like the chip rows above and below it. */
+  .sector-tally {
+    display: flex; flex-wrap: wrap; gap: 5px 14px;
+    padding: 0 var(--gutter) 12px;
+  }
+  .sector-tally span {
+    color: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: 0.6px;
+  }
+  .sector-tally b {
+    color: var(--dim); font-weight: normal; margin-left: 5px; font-variant-numeric: tabular-nums;
+  }
+
   .chip-row {
     display: flex; gap: 7px; overflow-x: auto; padding: 2px var(--gutter) 10px;
     scrollbar-width: none;
@@ -381,6 +394,7 @@
         <div class="avg-value" id="watch-avg-value"></div>
       </div>
     </div>
+    <div class="sector-tally" id="watch-sectors" aria-label="Watchlist by sector" hidden></div>
     <div class="chip-row" id="watch-chips" aria-label="Sort watchlist by metric"></div>
     <div class="columns" id="watch-columns" hidden>
       <span>#&nbsp;&nbsp;IN THIS LIST</span>
@@ -1131,6 +1145,14 @@ function renderWatch() {
     `aria-label="Sort by ${s.label}">${s.short}</button>`).join('') +
     `<button class="chip" data-formula-open aria-label="Edit the score formula">` +
     `ƒ ${esc(describeFormula(state.formula))}</button>` : '';
+  // What the list is made of, heaviest sector first — a watchlist that is nine
+  // tenths one sector is worth seeing as one, and the row numbers alone never
+  // say so. Read-only: the Ranks screen filters, this one reports.
+  const tally = groupOptions(list, 'sector', '').slice(1);
+  $('watch-sectors').hidden = !tally.length;
+  $('watch-sectors').innerHTML = tally.map((o) =>
+    `<span>${esc(o.label)}<b>${o.count}</b></span>`).join('');
+
   $('watch-columns').hidden = !list.length;
   $('watch-col-metric').textContent = sort.label;
 
