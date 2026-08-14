@@ -32,8 +32,8 @@ changed nothing.** Which link depends on whether the app moved:
 ### Standing link
 
 ```
-exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=h2lQcVbx16AONUg6jIxmO
-https://snack.expo.dev/h2lQcVbx16AONUg6jIxmO
+exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=ItepA5YhdjXzAUwMHEXB9
+https://snack.expo.dev/ItepA5YhdjXzAUwMHEXB9
 ```
 
 Keep this block current — it is the answer to "what do I tap right now".
@@ -97,8 +97,11 @@ re-exports the package and everything draws through it, so the bundle contains
 one import however many components use it. Check with:
 
 ```bash
-grep -c 'from "react-native-svg"' app/snack/App.js   # must print 1
+grep -c 'from *"react-native-svg"' app/snack/App.js   # must print 1
 ```
+
+The `*` matters: the bundle is minified, so the space before the quote is gone
+and the spaced pattern matches nothing — which looks exactly like passing.
 
 **Pin dependencies to the SDK, never `*`.** `react-native-svg`, AsyncStorage and
 `expo-haptics` all ship inside Expo Go, but a `*` version spec does not match
