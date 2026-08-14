@@ -110,6 +110,8 @@
   .sector-tally b {
     color: var(--dim); font-weight: normal; margin-left: 5px; font-variant-numeric: tabular-nums;
   }
+  /* The basket figure is the point of its row; its comparator is not. */
+  .sector-tally b.stat-lead { color: var(--text); }
 
   .chip-row {
     display: flex; gap: 7px; overflow-x: auto; padding: 2px var(--gutter) 10px;
@@ -394,6 +396,7 @@
         <div class="avg-value" id="watch-avg-value"></div>
       </div>
     </div>
+    <div class="sector-tally" id="watch-stats" aria-label="Watchlist as one basket" hidden></div>
     <div class="sector-tally" id="watch-sectors" aria-label="Watchlist by sector" hidden></div>
     <div class="chip-row" id="watch-chips" aria-label="Sort watchlist by metric"></div>
     <div class="columns" id="watch-columns" hidden>
@@ -1103,6 +1106,77 @@ function renderRanks() {
 }
 
 /* =============================================================== watch tab */
+const BASKET_SESSIONS = 252;
+
+/**
+ * Annualised volatility of the watchlist held as one equal-weight basket.
+ *
+ * Every name's simple daily return is averaged to give the basket's return for
+ * that day; the standard deviation of that series, annualised by √252, is the
+ * answer. Simple returns rather than log ones because a basket's return is the
+ * weighted mean of its holdings' simple returns — averaging logs would measure
+ * something that is not the basket.
+ *
+ * This is deliberately not the average of the names' own volatilities. That
+ * number cannot fall below the individual figures, whereas the basket's does,
+ * by exactly as much as the names move differently from one another. The gap
+ * between the two is the diversification, which is the reason to show it.
+ *
+ * A name is either in the whole window or out of it: splicing one in halfway
+ * would change what the basket is midway through its own history. Names are
+ * matched to the calendar by date rather than by index, so this stays correct
+ * if the tables ever stop sharing one.
+ */
+function basketVolatility(entries) {
+  const calendar = (DATA.tables[DATA.index.universes[0].key] || {}).dates || [];
+  const window = calendar.slice(-(BASKET_SESSIONS + 1));  // one extra for the first return
+  if (window.length < 30 || !entries.length) return null;
+
+  const kept = [];
+  let dropped = 0;
+  for (const { key, t } of entries) {
+    const dates = (DATA.tables[key] || {}).dates || [];
+    const at = new Map();
+    for (let i = 0; i < dates.length; i += 1) {
+      const close = t.history[i];
+      if (close !== null && close !== undefined) at.set(dates[i], close);
+    }
+    const closes = window.map((d) => at.get(d));
+    if (closes.some((c) => !(c > 0))) { dropped += 1; continue; }
+    kept.push(closes);
+  }
+  if (!kept.length) return null;
+
+  const spread = (returns) => {
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((a, r) => a + (r - mean) ** 2, 0) / returns.length;
+    return Math.sqrt(variance * YEAR_SESSIONS) * 100;
+  };
+
+  const basket = [];
+  for (let i = 1; i < window.length; i += 1) {
+    let sum = 0;
+    for (const closes of kept) sum += closes[i] / closes[i - 1] - 1;
+    basket.push(sum / kept.length);
+  }
+
+  // The comparator is measured over the same window, the same names and the
+  // same return convention, or the gap between them would be partly arithmetic.
+  const singles = kept.map((closes) => {
+    const returns = [];
+    for (let i = 1; i < closes.length; i += 1) returns.push(closes[i] / closes[i - 1] - 1);
+    return spread(returns);
+  });
+
+  return {
+    vol: spread(basket),
+    average: singles.reduce((a, b) => a + b, 0) / singles.length,
+    names: kept.length,
+    dropped,
+    sessions: basket.length,
+  };
+}
+
 function watchTickers() {
   if (!state.watchlist.length) return [];
   const wanted = new Set(state.watchlist);
@@ -1148,6 +1222,21 @@ function renderWatch() {
   // What the list is made of, heaviest sector first — a watchlist that is nine
   // tenths one sector is worth seeing as one, and the row numbers alone never
   // say so. Read-only: the Ranks screen filters, this one reports.
+  // The list held as one thing: how much the basket itself moves, which sits
+  // below the average of its names by however much they move differently.
+  const basket = basketVolatility(entries);
+  const stats = $('watch-stats');
+  stats.hidden = !basket;
+  if (basket) {
+    stats.innerHTML =
+      `<span>BASKET VOL 1Y<b class="stat-lead">${fmtMagnitude(basket.vol)}</b></span>` +
+      (basket.names > 1 ? `<span>AVG NAME<b>${fmtMagnitude(basket.average)}</b></span>` : '') +
+      (basket.dropped
+        ? `<span title="Names without the full ${BASKET_SESSIONS}-session window">` +
+          `${basket.dropped} TOO SHORT</span>`
+        : '');
+  }
+
   const tally = groupOptions(list, 'sector', '').slice(1);
   $('watch-sectors').hidden = !tally.length;
   $('watch-sectors').innerHTML = tally.map((o) =>
