@@ -8,7 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import { Defs, LinearGradient, Rect, Stop, Svg } from './svg';
 import { tick } from '../haptics';
 import { C, MONO, S, T, slop } from '../theme';
 

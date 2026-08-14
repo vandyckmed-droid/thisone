@@ -32,8 +32,8 @@ changed nothing.** Which link depends on whether the app moved:
 ### Standing link
 
 ```
-exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=vbfRNN6ySg8kR1LDqBA9T
-https://snack.expo.dev/vbfRNN6ySg8kR1LDqBA9T
+exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=02pCbDUHTTHXZz-Us885s
+https://snack.expo.dev/02pCbDUHTTHXZz-Us885s
 ```
 
 Keep this block current — it is the answer to "what do I tap right now".
@@ -87,6 +87,19 @@ carries both `snack=<id>` and the runtime it asked for. Do not replace that
 probe with the versions API; that API lists SDKs Expo Go cannot run.
 
 Never hand over a link that has not passed both assertions.
+
+**Import a native package from exactly one module.** The bundler emits one
+import statement per importing module, and Snack's runtime evaluates the
+package once for each of them. `react-native-svg` registers native views at
+module scope, so a second evaluation throws *"Tried to register two views with
+the same name RNSVGCircle"* — after the app has already started rendering. Two
+importers happened to survive; a third did not. `app/src/components/svg.js`
+re-exports the package and everything draws through it, so the bundle contains
+one import however many components use it. Check with:
+
+```bash
+grep -c 'from "react-native-svg"' app/snack/App.js   # must print 1
+```
 
 **Pin dependencies to the SDK, never `*`.** `react-native-svg`, AsyncStorage and
 `expo-haptics` all ship inside Expo Go, but a `*` version spec does not match

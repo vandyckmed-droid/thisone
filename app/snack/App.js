@@ -16,7 +16,19 @@ import {
   Text,
   View
 } from "react-native";
-import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
+
+// app/src/components/svg.js
+import {
+  default as Default,
+  Circle,
+  Defs,
+  Line,
+  LinearGradient,
+  Path,
+  Polyline,
+  Rect,
+  Stop
+} from "react-native-svg";
 
 // app/src/haptics.js
 import * as Haptics from "expo-haptics";
@@ -167,7 +179,7 @@ function ChipRow({ children, accessibilityLabel }) {
       </ScrollView>
 
       {overflow && !atEnd && <View pointerEvents="none" style={styles.fade}>
-          <Svg width={36} height="100%">
+          <Default width={36} height="100%">
             <Defs>
               <LinearGradient id="chipFade" x1="0" y1="0" x2="1" y2="0">
                 <Stop offset="0" stopColor={C.bg} stopOpacity="0" />
@@ -175,7 +187,7 @@ function ChipRow({ children, accessibilityLabel }) {
               </LinearGradient>
             </Defs>
             <Rect x="0" y="0" width="36" height="100%" fill="url(#chipFade)" />
-          </Svg>
+          </Default>
           <Text style={styles.fadeMark}>›</Text>
         </View>}
     </View>;
@@ -660,10 +672,9 @@ import { Image, Pressable as Pressable2, StyleSheet as StyleSheet2, Text as Text
 
 // app/src/components/Sparkline.js
 import React2 from "react";
-import Svg2, { Polyline } from "react-native-svg";
 function Sparkline({ points, width = 56, height = 22, color = C.acid }) {
   if (!points || points.length < 2) {
-    return <Svg2 width={width} height={height} />;
+    return <Default width={width} height={height} />;
   }
   let min = Infinity;
   let max = -Infinity;
@@ -680,7 +691,7 @@ function Sparkline({ points, width = 56, height = 22, color = C.acid }) {
     const y = pad + usable - (p.close - min) / span * usable;
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  return <Svg2 width={width} height={height}>
+  return <Default width={width} height={height}>
       <Polyline
     points={coords}
     fill="none"
@@ -689,7 +700,7 @@ function Sparkline({ points, width = 56, height = 22, color = C.acid }) {
     strokeLinejoin="round"
     strokeLinecap="round"
   />
-    </Svg2>;
+    </Default>;
 }
 var Sparkline_default = React2.memo(Sparkline);
 
@@ -1300,7 +1311,6 @@ import { Image as Image2, Pressable as Pressable4, ScrollView as ScrollView3, St
 // app/src/components/PriceChart.js
 import React6, { useMemo as useMemo2, useState as useState5 } from "react";
 import { StyleSheet as StyleSheet5, Text as Text5, View as View5 } from "react-native";
-import Svg3, { Circle, Defs as Defs2, Line, LinearGradient as LinearGradient2, Path, Stop as Stop2 } from "react-native-svg";
 var H = 200;
 var PAD_TOP = 14;
 var PAD_BOTTOM = 18;
@@ -1367,13 +1377,13 @@ function PriceChart({ points, showHint, onScrubbed }) {
     onResponderRelease={() => setCursor(null)}
     onResponderTerminate={() => setCursor(null)}
   >
-        {geometry ? <Svg3 width={width} height={H}>
-            <Defs2>
-              <LinearGradient2 id="fade" x1="0" y1="0" x2="0" y2="1">
-                <Stop2 offset="0" stopColor={stroke} stopOpacity="0.22" />
-                <Stop2 offset="1" stopColor={stroke} stopOpacity="0" />
-              </LinearGradient2>
-            </Defs2>
+        {geometry ? <Default width={width} height={H}>
+            <Defs>
+              <LinearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+                <Stop offset="0" stopColor={stroke} stopOpacity="0.22" />
+                <Stop offset="1" stopColor={stroke} stopOpacity="0" />
+              </LinearGradient>
+            </Defs>
 
             <Line x1="0" y1={H - PAD_BOTTOM} x2={width} y2={H - PAD_BOTTOM} stroke={C.line} strokeWidth="1" />
             <Path d={geometry.area} fill="url(#fade)" />
@@ -1390,7 +1400,7 @@ function PriceChart({ points, showHint, onScrubbed }) {
   />
                 <Circle cx={geometry.xy[cursor].x} cy={geometry.xy[cursor].y} r="4.5" fill={stroke} />
               </>}
-          </Svg3> : <View5 style={styles5.empty}>
+          </Default> : <View5 style={styles5.empty}>
             <Text5 style={styles5.emptyText}>NOT ENOUGH HISTORY</Text5>
           </View5>}
 
