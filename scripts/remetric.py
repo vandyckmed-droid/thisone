@@ -30,9 +30,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from build_snapshot import (  # noqa: E402
-    MOM_WINDOWS, TRADING_DAYS_PER_YEAR, WINDOWS,
-    annualised_vol, max_drawdown, momentum, pct_change, window_ratio,
-    write_atomically, ytd_change, _round,
+    MOM_MONTHS, TRADING_DAYS_PER_YEAR, WINDOWS,
+    annualised_vol, max_drawdown, mom_meta, mom_window, monthly_momentum,
+    pct_change, write_atomically, ytd_change, _round,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,12 +41,13 @@ DATA = ROOT / "data"
 # Fields the old formulas produced that no longer exist. Left in place they
 # would be a second, contradictory answer to questions the app now asks of the
 # view it is showing.
-RETIRED = ("momentumReturns", "momentumScore", "riskAdjusted1y", "ranks")
+RETIRED = ("momentumReturns", "momentumScore", "riskAdjusted1y", "ranks", "momWindows")
 
 
 def recompute(table: dict) -> tuple[dict, list[str]]:
     """A copy of `table` with every derived metric rebuilt from its history."""
     calendar = table["dates"]
+    months = mom_window(calendar)
     notes: list[str] = []
     rows = []
 
@@ -62,24 +63,19 @@ def recompute(table: dict) -> tuple[dict, list[str]]:
         returns = {label: pct_change(closes, n) for label, n in WINDOWS.items()}
         returns["ytd"] = ytd_change(dated)
         row["returns"] = {k: _round(v) for k, v in returns.items()}
-        row["momWindows"] = {
-            f"{n}-{skip}": _round(window_ratio(closes, n, skip), 3)
-            for n, skip in MOM_WINDOWS
-        }
         row["volatility"] = {
             "30d": _round(annualised_vol(closes, 30)),
             "90d": _round(annualised_vol(closes, 90)),
             "1y": _round(annualised_vol(closes, TRADING_DAYS_PER_YEAR)),
         }
         row["maxDrawdown1y"] = _round(max_drawdown(closes, TRADING_DAYS_PER_YEAR))
-        row["mom"] = _round(momentum(closes), 3)
+        mom_total, mom_scores = monthly_momentum(dated, months)
+        row["mom"] = _round(mom_total, 3)
+        row["momMonths"] = [_round(v, 3) for v in mom_scores]
         rows.append(row)
 
     out = {k: v for k, v in table.items() if k not in ("skip", "momentum", "tickers")}
-    out["mom"] = {
-        "windows": [{"sessions": n, "skip": skip} for n, skip in MOM_WINDOWS],
-        "measure": "annualised return / annualised volatility, averaged",
-    }
+    out["mom"] = mom_meta(calendar)
     out["tickers"] = rows
     return out, notes
 
@@ -90,16 +86,17 @@ def check(table: dict, path: Path) -> list[str]:
     rows = table["tickers"]
     scored = [t for t in rows if t.get("mom") is not None]
 
-    # Momentum needs 250 sessions plus the skip, so a young listing having none
-    # is expected -- the whole table having none is a broken formula.
+    # Momentum needs eleven months plus a 63-session run-up, so a young listing
+    # having none is expected -- the whole table having none is a broken formula.
     if len(scored) < len(rows) * 0.5:
         errors.append(f"{path.name}: only {len(scored)}/{len(rows)} tickers scored a momentum")
-    # Deliberately loose. A genuine 30-bagger annualises into a ratio in the
-    # 20s -- SNDK does exactly that -- while the failure this guards against,
-    # dividing by a volatility rounded to nothing, lands in the thousands.
+    # Eleven daily Sharpes summed; a very strong year lands near 3. Loose
+    # enough for a real outlier, tight enough to catch a division blowing up.
     for t in rows:
-        if t.get("mom") is not None and not -100 < t["mom"] < 100:
+        if t.get("mom") is not None and not -25 < t["mom"] < 25:
             errors.append(f"{path.name}: {t['symbol']} momentum {t['mom']} out of range")
+        if t.get("mom") is not None and len(t.get("momMonths") or []) != MOM_MONTHS:
+            errors.append(f"{path.name}: {t['symbol']} scored on {len(t.get('momMonths') or [])} months, need {MOM_MONTHS}")
         if t["returns"].get("1y") is not None and not -100 <= t["returns"]["1y"] < 10000:
             errors.append(f"{path.name}: {t['symbol']} 1y return {t['returns']['1y']}% out of range")
     return errors

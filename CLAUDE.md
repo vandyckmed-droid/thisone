@@ -121,6 +121,12 @@ Three invariants worth not breaking:
 - Nothing in `data/` is ranked. Every score and placing the app shows is
   measured against the rows on screen, so a filter re-ranks the field. Publish
   the raw measure and let the app do the ranking.
+- MOM is a sum of eleven monthly daily-Sharpe terms, and both halves of each
+  term are daily quantities on purpose. Do not annualise it: annualising both
+  halves only multiplies by √252 and changes no ordering, and doing it to the
+  numerator alone — compounding a simple return over a log-return volatility —
+  mixes two scales and inflates exactly the most extreme names. That bug shipped
+  once and put a 30-bagger nine times clear of the field.
 
 - The pipeline validates entirely in memory and writes by atomic rename, so a
   failed refresh leaves every published file byte-for-byte intact. Keep it that
