@@ -24,7 +24,10 @@ Environment
 FMP_API_KEY / API_KEY   required
 TOP_N                   size of the market-cap core (default 100)
 BALANCED_N              extra names chosen to spread sectors (default 100)
-LOOKAHEAD               candidates the balancer weighs at a time (default 5)
+SELECTION               "collar" (default) or "lookahead"
+SECTOR_CAP_PCT          most of the universe any one sector may hold (default 20)
+SECTOR_FLOOR_PCT        least any sector present may hold (default 4)
+LOOKAHEAD               candidates the lookahead method weighs (default 5)
 HISTORY_DAYS            calendar days of history to request (default 760)
 OUTPUT                  snapshot path (default data/snapshot.json)
 MAX_WORKERS             concurrent API requests (default 8)
@@ -58,8 +61,16 @@ API_KEY = os.environ.get("FMP_API_KEY") or os.environ.get("API_KEY") or ""
 # utility -- so the expansion is chosen to spread across sectors instead.
 CORE_N = int(os.environ.get("TOP_N", "100"))
 BALANCED_N = int(os.environ.get("BALANCED_N", "100"))
-LOOKAHEAD = int(os.environ.get("LOOKAHEAD", "5"))
 TARGET_N = CORE_N + BALANCED_N
+
+# Balance is expressed as a share of the finished universe, not a count, so the
+# same numbers mean the same thing whether the table holds fifty names or five
+# thousand. A ceiling alone would leave the smallest sectors as tokens and a
+# floor alone would leave the largest dominant, so it takes both.
+SECTOR_CAP_PCT = float(os.environ.get("SECTOR_CAP_PCT", "20"))
+SECTOR_FLOOR_PCT = float(os.environ.get("SECTOR_FLOOR_PCT", "4"))
+SELECTION = os.environ.get("SELECTION", "collar")
+LOOKAHEAD = int(os.environ.get("LOOKAHEAD", "5"))
 HISTORY_DAYS = int(os.environ.get("HISTORY_DAYS", "760"))
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "8"))
 
@@ -311,6 +322,88 @@ def align(series: dict[str, float], calendar: list[str]) -> list[float | None]:
         else:
             out.append(None)
     return out
+
+
+def collar_bounds(target: int, sectors: int) -> tuple[int, int]:
+    """Turn the percentages into counts, then make them arithmetically possible.
+
+    Percentages can describe an impossible table. Ten sectors under a 5% ceiling
+    cannot hold a hundred names, and eleven sectors each guaranteed 20% would
+    need two hundred percent of one. So the ceiling rises far enough to hold the
+    universe and the floor drops far enough to fit inside it -- always in that
+    order, because a table that cannot be filled is a worse failure than one
+    that is less balanced than requested.
+    """
+    if sectors <= 0:
+        return target, 0
+
+    cap = max(1, round(target * SECTOR_CAP_PCT / 100))
+    floor = int(target * SECTOR_FLOOR_PCT / 100)
+
+    cap = max(cap, -(-target // sectors))       # ceil: the ceiling must hold the table
+    if floor * sectors > target:
+        floor = target // sectors               # the floors must fit under it
+    floor = min(floor, cap)
+    return cap, floor
+
+
+def select_collar(candidates: list[dict[str, Any]], counts: dict[str, int],
+                  target: int, cap: int, floor: int) -> list[dict[str, Any]]:
+    """Pick `target` names in market-cap order, held between a floor and a cap.
+
+    Three passes: lift every sector to the floor, then fill by market cap while
+    no sector exceeds the cap, then -- only if the cap left the table short --
+    relax it rather than publish fewer names than asked for.
+
+    Unlike a lookahead, this states a guarantee instead of describing a
+    procedure: no sector above the cap, none below the floor, and everything
+    else in plain market-cap order.
+    """
+    by_sector: dict[str, list[dict[str, Any]]] = {}
+    for entry in candidates:
+        by_sector.setdefault(entry["sector"], []).append(entry)
+
+    chosen: list[dict[str, Any]] = []
+    taken: set[str] = set()
+
+    for sector, rows in by_sector.items():
+        shortfall = floor - counts.get(sector, 0)
+        for entry in rows[:max(0, shortfall)]:
+            if len(chosen) >= target:
+                break
+            chosen.append(entry)
+            taken.add(entry["symbol"])
+            counts[sector] = counts.get(sector, 0) + 1
+
+    overflow: list[dict[str, Any]] = []
+    for entry in candidates:
+        if len(chosen) >= target:
+            break
+        if entry["symbol"] in taken:
+            continue
+        if counts.get(entry["sector"], 0) < cap:
+            chosen.append(entry)
+            taken.add(entry["symbol"])
+            counts[entry["sector"]] = counts.get(entry["sector"], 0) + 1
+        else:
+            overflow.append(entry)
+
+    relaxed = 0
+    for entry in overflow:
+        if len(chosen) >= target:
+            break
+        chosen.append(entry)
+        counts[entry["sector"]] = counts.get(entry["sector"], 0) + 1
+        relaxed += 1
+
+    # The cap is a promise, so breaking it should never be quiet. This only
+    # happens when the candidate pool is too thin to fill the table any other
+    # way, which means the screen needs widening rather than the cap loosening.
+    if relaxed:
+        log(f"  NOTE: cap of {cap} relaxed for {relaxed} names -- "
+            f"too few candidates to fill {target} otherwise")
+
+    return chosen
 
 
 def select_balanced(candidates: list[dict[str, Any]], counts: dict[str, int],
@@ -608,10 +701,18 @@ def build_snapshot() -> dict[str, Any]:
         counts[ticker["sector"]] = counts.get(ticker["sector"], 0) + 1
     log(f"core: {len(core)} by market cap, {len(counts)} sectors")
 
-    balanced = select_balanced(eligible[CORE_N:], counts, BALANCED_N, LOOKAHEAD)
+    sectors = len({t["sector"] for t in eligible})
+    cap, floor = collar_bounds(TARGET_N, sectors)
+    if SELECTION == "lookahead":
+        balanced = select_balanced(eligible[CORE_N:], counts, BALANCED_N, LOOKAHEAD)
+        detail = f"lookahead {LOOKAHEAD}"
+    else:
+        balanced = select_collar(eligible[CORE_N:], counts, BALANCED_N, cap, floor)
+        detail = (f"cap {cap} ({SECTOR_CAP_PCT:g}%), floor {floor} ({SECTOR_FLOOR_PCT:g}%) "
+                  f"over {sectors} sectors")
     if balanced:
-        log(f"balanced: {len(balanced)} added from {len(eligible) - len(core)} candidates "
-            f"with a lookahead of {LOOKAHEAD}")
+        log(f"balanced: {len(balanced)} added from {len(eligible) - len(core)} "
+            f"candidates via {detail}")
 
     tickers = core + balanced
     tickers.sort(key=lambda t: t["marketCap"], reverse=True)
@@ -630,9 +731,15 @@ def build_snapshot() -> dict[str, Any]:
         # How the universe was chosen, so a consumer can tell a pure market-cap
         # table from one that has been spread across sectors.
         "selection": {
+            "method": SELECTION,
             "core": len(core),
             "balanced": len(balanced),
-            "lookahead": LOOKAHEAD,
+            **({"lookahead": LOOKAHEAD} if SELECTION == "lookahead" else {
+                "sectorCapPct": SECTOR_CAP_PCT,
+                "sectorFloorPct": SECTOR_FLOOR_PCT,
+                "sectorCap": cap,
+                "sectorFloor": floor,
+            }),
         },
         "sessions": len(calendar),
         "dates": calendar,
