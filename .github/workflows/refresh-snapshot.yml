@@ -37,7 +37,11 @@ jobs:
       # the commit step below.
       - name: Build and validate snapshot
         env:
+          # The secret may be stored under either name; the script prefers
+          # FMP_API_KEY and falls back to API_KEY, so passing both means the
+          # run does not hinge on which one was typed into Settings.
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          API_KEY: ${{ secrets.API_KEY }}
           TOP_N: ${{ github.event.inputs.top_n || '100' }}
         run: python scripts/build_snapshot.py
 
