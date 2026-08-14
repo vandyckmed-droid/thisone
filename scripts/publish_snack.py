@@ -41,6 +41,7 @@ import urllib.request
 
 SAVE_ENDPOINT = "https://exp.host/--/api/v2/snack/save"
 SNACK_PAGE = "https://snack.expo.dev/{id}"
+NATIVE_MODULES = "https://exp.host/--/api/v2/sdks/{sdk}/native-modules"
 BUNDLE = "app/snack/App.js"
 
 DEPENDENCIES = ["react-native-svg", "@react-native-async-storage/async-storage", "expo-haptics"]
@@ -80,16 +81,33 @@ def default_runtime(code: str) -> str | None:
     return runtime_pattern(get(SNACK_PAGE.format(id=probe_id)))
 
 
-def save(code: str, sdk: str) -> str:
+def dependency_versions(sdk: str) -> dict[str, str]:
+    """Pin each dependency to the version Expo bundles with this SDK.
+
+    Asking for "*" makes Snackager try to build whatever npm currently calls
+    latest, which need not work against an older runtime -- it failed outright
+    with "Unable to fetch module react-native-svg@* for ios". Expo publishes the
+    version it actually ships per SDK, so use that.
+    """
+    try:
+        rows = json.loads(get(NATIVE_MODULES.format(sdk=sdk)))["data"]
+    except Exception:
+        return {d: "*" for d in DEPENDENCIES}
+    published = {r["npmPackage"]: r["versionRange"] for r in rows}
+    return {d: published.get(d, "*") for d in DEPENDENCIES}
+
+
+def save(code: str, sdk: str, versions: dict[str, str] | None = None) -> str:
+    versions = versions or {d: "*" for d in DEPENDENCIES}
     payload = {
         "manifest": {
             "name": NAME,
             "description": DESCRIPTION,
             "sdkVersion": sdk,
-            "dependencies": {d: "*" for d in DEPENDENCIES},
+            "dependencies": dict(versions),
         },
         "code": {"App.js": {"type": "CODE", "contents": code}},
-        "dependencies": {d: {"version": "*"} for d in DEPENDENCIES},
+        "dependencies": {d: {"version": v} for d, v in versions.items()},
     }
     req = urllib.request.Request(
         SAVE_ENDPOINT,
@@ -150,7 +168,15 @@ def main() -> int:
         return 1
     print(f"Snack runtime: SDK {sdk}")
 
-    snack_id = save(code, sdk)
+    versions = dependency_versions(sdk)
+    for dep, version in versions.items():
+        print(f"  {dep} @ {version}")
+    unpinned = [d for d, v in versions.items() if v == "*"]
+    if unpinned:
+        print(f"Expo publishes no SDK {sdk} version for: {', '.join(unpinned)}", file=sys.stderr)
+        return 1
+
+    snack_id = save(code, sdk, versions)
     link = deep_link(snack_id)
     if not link:
         print(f"Saved as {snack_id}, but the runtime will not bind it.", file=sys.stderr)
