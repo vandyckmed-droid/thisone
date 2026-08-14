@@ -2,7 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import PriceChart from '../components/PriceChart';
 import { Chip, ChipRow, Disclosure, SectionTitle, Stat } from '../components/UI';
-import { RANGES, changeOver, seriesFor } from '../data';
+import { RANGES, changeOver, seriesFor, universeLabel } from '../data';
 import { confirm, undo } from '../haptics';
 import {
   C, MONO, S, T,
@@ -36,6 +36,9 @@ export default function TickerScreen({
   const [range, setRange] = useState('1Y');
   const swipeStart = useRef(0);
 
+  // Ranks are computed inside whichever table this ticker came from, so every
+  // placing on this screen carries the universe it was measured against.
+  const scope = universeLabel(snapshot);
   const skip = snapshot.skip || {};
   const returnSkips = skip.returns || {};
   const momentumSkips = skip.momentum || (snapshot.momentum || {}).skips || {};
@@ -195,7 +198,7 @@ export default function TickerScreen({
             reason={missingReason('momentum')}
           />
           <Stat
-            label={`RANK OF ${snapshot.universeSize}`}
+            label={`RANK IN ${scope}`}
             value={fmtRank(ticker.ranks.momentum)}
             width="50%"
             reason={missingReason('momentum')}
@@ -237,10 +240,15 @@ export default function TickerScreen({
             the short end than the long.
           </Text>
           <Text style={styles.prose}>
-            This ticker is ranked against the other {snapshot.universeSize - 1} on each of those four
-            windows, and the four placings are averaged and rescaled so 100 is the strongest of the{' '}
-            {snapshot.universeSize}. A high score means winning across every timeframe, not spiking
-            in one.
+            This ticker is ranked against the other {snapshot.universeSize - 1} in {snapshot.title}{' '}
+            on each of those four windows, and the four placings are averaged and rescaled so 100 is
+            the strongest of the {snapshot.universeSize}. A high score means winning across every
+            timeframe, not spiking in one.
+          </Text>
+          <Text style={styles.prose}>
+            Every table scores itself, so the same company carries a different score in the Top 300
+            than it does among its own sector — the field it is being measured against is not the
+            same field.
           </Text>
           <Text style={styles.prose}>
             It stays blank until a company has traded about 13 months — the 12-month window plus the
@@ -249,7 +257,7 @@ export default function TickerScreen({
           </Text>
         </Disclosure>
 
-        <SectionTitle>RANK IN TOP {snapshot.universeSize}</SectionTitle>
+        <SectionTitle>RANK IN {scope}</SectionTitle>
         <View style={styles.grid}>
           <Stat label="MARKET CAP" value={fmtRank(ticker.ranks.marketCap)} color={C.acid} />
           <Stat label="1 MONTH" value={fmtRank(ticker.ranks.return_1m)} />
@@ -260,6 +268,13 @@ export default function TickerScreen({
           <Stat label="RETURN/RISK" value={fmtRank(ticker.ranks.riskAdjusted)} />
           <Stat label="LOW VOL" value={fmtRank(ticker.ranks.volatility)} />
         </View>
+
+        <Text style={styles.note}>
+          Placings run 1 to {snapshot.universeSize} within {snapshot.title}
+          {snapshot.scope === 'sector'
+            ? ' — this company against its own sector, not the whole market.'
+            : '.'}
+        </Text>
 
         <Text style={styles.footnote}>
           Dividend-adjusted closes, {ticker.firstSession} to {ticker.asOf}.

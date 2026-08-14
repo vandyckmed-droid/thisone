@@ -135,7 +135,7 @@ export function Disclosure({ label, children }) {
 
 /** One control that opens a list, for a setting with more options than
  *  deserve permanent space on screen. */
-export function SelectSheet({ title, options, value, visible, onSelect, onClose }) {
+export function SelectSheet({ title, hint, options, value, visible, onSelect, onClose }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.sheetBackdrop} onPress={onClose} accessibilityLabel="Dismiss">
@@ -143,6 +143,7 @@ export function SelectSheet({ title, options, value, visible, onSelect, onClose 
             dismiss it; only the backdrop does. */}
         <Pressable style={styles.sheet} onPress={() => {}}>
           <Text style={styles.sheetTitle}>{title}</Text>
+          {!!hint && <Text style={styles.sheetHint}>{hint}</Text>}
           <ScrollView bounces={false}>
             {options.map((option) => {
               const active = option.value === value;
@@ -156,6 +157,10 @@ export function SelectSheet({ title, options, value, visible, onSelect, onClose 
                   }}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
+                  accessibilityLabel={
+                    `${option.label}${option.count === undefined ? '' : `, ${option.count}`}` +
+                    (active ? ', selected' : '')
+                  }
                   style={({ pressed }) => [styles.sheetRow, pressed && styles.sheetRowPressed]}
                 >
                   <Text style={[styles.sheetLabel, active && styles.sheetLabelActive]}>
@@ -338,6 +343,10 @@ const styles = StyleSheet.create({
   sheetTitle: {
     color: C.dim, fontFamily: MONO, fontSize: T.micro, letterSpacing: 1.4,
     paddingHorizontal: S.gutter, paddingBottom: 10,
+  },
+  sheetHint: {
+    color: C.faint, fontSize: T.micro, lineHeight: T.micro + 6,
+    paddingHorizontal: S.gutter, paddingBottom: 12,
   },
   sheetRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',

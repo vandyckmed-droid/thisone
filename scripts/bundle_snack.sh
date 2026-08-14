@@ -49,15 +49,15 @@ path, branch = sys.argv[1], sys.argv[2]
 src = open(path).read()
 pinned = (
     "https://raw.githubusercontent.com/vandyckmed-droid/thisone/"
-    f"refs/heads/{branch}/data/snapshot.json"
+    f"refs/heads/{branch}/data/"
 )
 src, n = re.subn(
-    r"https://raw\.githubusercontent\.com/vandyckmed-droid/thisone/[^']*?/data/snapshot\.json",
+    r"https://raw\.githubusercontent\.com/vandyckmed-droid/thisone/[^']*?/data/",
     pinned, src)
 if n != 1:
-    sys.exit(f"expected exactly one snapshot URL in the bundle, found {n}")
+    sys.exit(f"expected exactly one data URL in the bundle, found {n}")
 open(path, "w").write(src)
-print(f"Pinned snapshot to {branch}")
+print(f"Pinned data directory to {branch}")
 PY
 fi
 

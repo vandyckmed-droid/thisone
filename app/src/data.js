@@ -1,4 +1,7 @@
-import { loadCachedSnapshot, saveCachedSnapshot } from './storage';
+import {
+  loadCachedIndex, loadCachedUniverse, saveCachedIndex, saveCachedUniverse,
+} from './storage';
+import { normaliseBase } from './source';
 
 // Columns the Ranks screen can sort by. `value` pulls the number out of a
 // ticker, `better` says which end of the scale wins, and `rank` names the
@@ -28,36 +31,108 @@ export const RANGES = [
   { key: 'MAX', sessions: Infinity },
 ];
 
+const bust = (url) => `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+
+async function getJson(url) {
+  // GitHub's raw CDN caches aggressively; the cache-buster keeps a fresh table
+  // from taking minutes to reach the phone.
+  const res = await fetch(bust(url), { headers: { 'Cache-Control': 'no-cache' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
 /**
- * Pull a fresh snapshot, falling back to the cached copy so the app still
- * opens on a plane. Returns the snapshot plus where it came from.
+ * The list of universes on offer. Falls back to the cached copy, and failing
+ * that to a single entry, so the app is never left with nothing to show.
  */
-export async function fetchSnapshot(sourceUrl, { allowCache = true } = {}) {
-  const cached = allowCache ? await loadCachedSnapshot() : null;
+export async function fetchIndex(sourceUrl) {
+  const base = normaliseBase(sourceUrl);
   try {
-    // GitHub's raw CDN caches aggressively; the cache-buster keeps a
-    // post-close refresh from taking minutes to show up on the phone.
-    const url = `${sourceUrl}${sourceUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
-    const res = await fetch(url, { headers: { 'Cache-Control': 'no-cache' } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    const snapshot = await res.json();
-    if (!snapshot || !Array.isArray(snapshot.tickers) || !snapshot.tickers.length) {
-      throw new Error('Snapshot is empty or malformed');
+    const index = await getJson(`${base}index.json`);
+    if (!index || !Array.isArray(index.universes) || !index.universes.length) {
+      throw new Error('Index is empty or malformed');
     }
-
-    await saveCachedSnapshot(snapshot);
-    return { snapshot, fromCache: false, error: null, fetchedAt: Date.now() };
+    await saveCachedIndex(index);
+    return { index, fromCache: false, error: null };
   } catch (err) {
-    if (cached) {
-      return { snapshot: cached, fromCache: true, error: err.message, fetchedAt: null };
+    const cached = await loadCachedIndex();
+    if (cached) return { index: cached, fromCache: true, error: err.message };
+    return {
+      index: { universes: [{ key: 'all', title: 'All', scope: 'all', file: 'snapshot.json' }] },
+      fromCache: false,
+      error: err.message,
+    };
+  }
+}
+
+/**
+ * One universe's table, falling back to its own cached copy so a sector you
+ * have already opened still works on a plane.
+ */
+export async function fetchUniverse(sourceUrl, universe) {
+  const base = normaliseBase(sourceUrl);
+  const key = universe.key;
+  try {
+    const fetched = await getJson(`${base}${universe.file}`);
+    if (!fetched || !Array.isArray(fetched.tickers) || !fetched.tickers.length) {
+      throw new Error('Table is empty or malformed');
     }
+    // The index already names and sizes every universe, so a hand-written table
+    // that leaves those out still displays rather than rendering "undefined".
+    const table = {
+      title: universe.title || universe.key,
+      scope: universe.scope || 'all',
+      ...fetched,
+      universeSize: fetched.universeSize || fetched.tickers.length,
+    };
+    await saveCachedUniverse(key, table);
+    return { table, fromCache: false, error: null, fetchedAt: Date.now() };
+  } catch (err) {
+    const cached = await loadCachedUniverse(key);
+    if (cached) return { table: cached, fromCache: true, error: err.message, fetchedAt: null };
     throw err;
   }
 }
 
-/** Filter by symbol/name/sector, then sort, keeping unrankable names last. */
-export function arrange(tickers, { sortKey, query, sector, direction = 'desc' }) {
+/**
+ * How a table names itself in a heading: "TOP 300", "HEALTHCARE 100".
+ *
+ * Ranks are computed inside each file, so every rank on screen needs the
+ * universe attached to it — #12 means something completely different in the
+ * Top 300 than it does among a hundred healthcare names.
+ */
+export function universeLabel(table) {
+  if (!table) return '';
+  return table.scope === 'sector'
+    ? `${table.title.toUpperCase()} ${table.universeSize}`
+    : `TOP ${table.universeSize}`;
+}
+
+/** One line of prose describing what the open table contains. */
+export function describeUniverse(table) {
+  if (!table) return '';
+  return table.scope === 'sector'
+    ? `${table.universeSize} LARGEST ${table.title.toUpperCase()} COMPANIES`
+    : `${table.universeSize} LARGEST US COMPANIES`;
+}
+
+/** The index as sheet options: every universe with how many names it holds. */
+export function universeOptions(index) {
+  if (!index || !Array.isArray(index.universes)) return [];
+  return index.universes.map((u) => ({
+    value: u.key,
+    label: u.title.toUpperCase(),
+    count: u.size,
+  }));
+}
+
+export const findUniverse = (index, key) => {
+  const list = (index && index.universes) || [];
+  return list.find((u) => u.key === key) || list[0] || null;
+};
+
+/** Filter by symbol/name/sector/industry, then sort, unrankable names last. */
+export function arrange(tickers, { sortKey, query, sector, industry, direction = 'desc' }) {
   const sort = sortByKey(sortKey);
   const needle = (query || '').trim().toLowerCase();
 
@@ -71,6 +146,9 @@ export function arrange(tickers, { sortKey, query, sector, direction = 'desc' })
   }
   if (sector && sector !== 'All') {
     rows = rows.filter((t) => t.sector === sector);
+  }
+  if (industry && industry !== 'All') {
+    rows = rows.filter((t) => t.industry === industry);
   }
 
   // "Best first" means lowest for volatility and highest for everything else;
@@ -90,30 +168,40 @@ export function arrange(tickers, { sortKey, query, sector, direction = 'desc' })
   });
 }
 
-/**
- * Sectors for the filter sheet, each with how many tickers it holds.
- *
- * The count is what makes a list worth opening: it says up front that Energy
- * has three names and Technology thirty, which a row of equal-sized chips
- * could never convey.
- */
 /** The sort columns as sheet options, so Settings needs no chip cloud. */
 export function sortOptions() {
   return SORTS.map((s) => ({ value: s.key, label: s.label }));
 }
 
-export function sectorOptions(tickers) {
+/**
+ * Values of one field for the filter sheet, each with how many tickers carry
+ * it.
+ *
+ * The count is what makes the list worth opening: it says up front that Energy
+ * has three names and Technology thirty, which a row of equal-sized chips could
+ * never convey.
+ */
+function groupOptions(tickers, field, allLabel) {
   const counts = new Map();
   for (const ticker of tickers) {
-    counts.set(ticker.sector, (counts.get(ticker.sector) || 0) + 1);
+    const value = ticker[field];
+    if (!value) continue;
+    counts.set(value, (counts.get(value) || 0) + 1);
   }
   return [
-    { value: 'All', label: 'ALL SECTORS', count: tickers.length },
+    { value: 'All', label: allLabel, count: tickers.length },
     ...Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .map(([name, count]) => ({ value: name, label: name.toUpperCase(), count })),
   ];
 }
+
+export const sectorOptions = (tickers) => groupOptions(tickers, 'sector', 'ALL SECTORS');
+
+// Inside a sector table every row shares a sector, so the useful cut one level
+// down is the industry: Healthcare splits into drug manufacturers, devices,
+// insurers and hospitals, which is the distinction a reader is actually after.
+export const industryOptions = (tickers) => groupOptions(tickers, 'industry', 'ALL INDUSTRIES');
 
 /**
  * Trailing slice of a ticker's chart series.

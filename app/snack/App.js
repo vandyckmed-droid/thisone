@@ -237,7 +237,7 @@ function Disclosure({ label, children }) {
       {open && <View style={styles.disclosureBody}>{children}</View>}
     </View>;
 }
-function SelectSheet({ title, options, value, visible, onSelect, onClose }) {
+function SelectSheet({ title, hint, options, value, visible, onSelect, onClose }) {
   return <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.sheetBackdrop} onPress={onClose} accessibilityLabel="Dismiss">
         {
@@ -247,6 +247,7 @@ function SelectSheet({ title, options, value, visible, onSelect, onClose }) {
         <Pressable style={styles.sheet} onPress={() => {
   }}>
           <Text style={styles.sheetTitle}>{title}</Text>
+          {!!hint && <Text style={styles.sheetHint}>{hint}</Text>}
           <ScrollView bounces={false}>
             {options.map((option) => {
     const active = option.value === value;
@@ -259,6 +260,7 @@ function SelectSheet({ title, options, value, visible, onSelect, onClose }) {
       }}
       accessibilityRole="button"
       accessibilityState={{ selected: active }}
+      accessibilityLabel={`${option.label}${option.count === void 0 ? "" : `, ${option.count}`}` + (active ? ", selected" : "")}
       style={({ pressed }) => [styles.sheetRow, pressed && styles.sheetRowPressed]}
     >
                   <Text style={[styles.sheetLabel, active && styles.sheetLabelActive]}>
@@ -416,6 +418,13 @@ var styles = StyleSheet.create({
     paddingHorizontal: S.gutter,
     paddingBottom: 10
   },
+  sheetHint: {
+    color: C.faint,
+    fontSize: T.micro,
+    lineHeight: T.micro + 6,
+    paddingHorizontal: S.gutter,
+    paddingBottom: 12
+  },
   sheetRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -494,16 +503,25 @@ var styles = StyleSheet.create({
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // app/src/source.js
-var DEFAULT_SOURCE = "https://raw.githubusercontent.com/vandyckmed-droid/thisone/main/data/snapshot.json";
+var DEFAULT_SOURCE = "https://raw.githubusercontent.com/vandyckmed-droid/thisone/main/data/";
+var normaliseBase = (url) => {
+  const trimmed = (url || "").trim();
+  const withoutFile = trimmed.replace(/(index|snapshot)\.json$/i, "");
+  return withoutFile.endsWith("/") ? withoutFile : `${withoutFile}/`;
+};
 
 // app/src/storage.js
 var K = {
   watchlist: "@top100/watchlist",
   settings: "@top100/settings",
-  snapshot: "@top100/snapshot"
+  index: "@top100/index",
+  // Each universe caches under its own key, so switching between them is
+  // instant after the first visit and every one of them survives going offline.
+  universe: (key) => `@top100/universe/${key}`
 };
 var DEFAULT_SETTINGS = {
   sourceUrl: DEFAULT_SOURCE,
+  universeKey: "all",
   defaultSort: "marketCap",
   showLogos: true,
   showSparklines: true,
@@ -535,11 +553,14 @@ var loadSettings = async () => ({
   ...await read(K.settings, {})
 });
 var saveSettings = (settings) => write(K.settings, settings);
-var loadCachedSnapshot = () => read(K.snapshot, null);
-var saveCachedSnapshot = (snapshot) => write(K.snapshot, snapshot);
+var loadCachedIndex = () => read(K.index, null);
+var saveCachedIndex = (index) => write(K.index, index);
+var loadCachedUniverse = (key) => read(K.universe(key), null);
+var saveCachedUniverse = (key, table) => write(K.universe(key), table);
 var clearAll = async () => {
   try {
-    await AsyncStorage.multiRemove([K.watchlist, K.settings, K.snapshot]);
+    const keys = await AsyncStorage.getAllKeys();
+    await AsyncStorage.multiRemove(keys.filter((k) => k.startsWith("@top100/")));
     return true;
   } catch (err) {
     return false;
@@ -569,26 +590,74 @@ var RANGES = [
   { key: "2Y", sessions: 504 },
   { key: "MAX", sessions: Infinity }
 ];
-async function fetchSnapshot(sourceUrl, { allowCache = true } = {}) {
-  const cached = allowCache ? await loadCachedSnapshot() : null;
+var bust = (url) => `${url}${url.includes("?") ? "&" : "?"}t=${Date.now()}`;
+async function getJson(url) {
+  const res = await fetch(bust(url), { headers: { "Cache-Control": "no-cache" } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+async function fetchIndex(sourceUrl) {
+  const base = normaliseBase(sourceUrl);
   try {
-    const url = `${sourceUrl}${sourceUrl.includes("?") ? "&" : "?"}t=${Date.now()}`;
-    const res = await fetch(url, { headers: { "Cache-Control": "no-cache" } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const snapshot = await res.json();
-    if (!snapshot || !Array.isArray(snapshot.tickers) || !snapshot.tickers.length) {
-      throw new Error("Snapshot is empty or malformed");
+    const index = await getJson(`${base}index.json`);
+    if (!index || !Array.isArray(index.universes) || !index.universes.length) {
+      throw new Error("Index is empty or malformed");
     }
-    await saveCachedSnapshot(snapshot);
-    return { snapshot, fromCache: false, error: null, fetchedAt: Date.now() };
+    await saveCachedIndex(index);
+    return { index, fromCache: false, error: null };
   } catch (err) {
-    if (cached) {
-      return { snapshot: cached, fromCache: true, error: err.message, fetchedAt: null };
+    const cached = await loadCachedIndex();
+    if (cached) return { index: cached, fromCache: true, error: err.message };
+    return {
+      index: { universes: [{ key: "all", title: "All", scope: "all", file: "snapshot.json" }] },
+      fromCache: false,
+      error: err.message
+    };
+  }
+}
+async function fetchUniverse(sourceUrl, universe) {
+  const base = normaliseBase(sourceUrl);
+  const key = universe.key;
+  try {
+    const fetched = await getJson(`${base}${universe.file}`);
+    if (!fetched || !Array.isArray(fetched.tickers) || !fetched.tickers.length) {
+      throw new Error("Table is empty or malformed");
     }
+    const table = {
+      title: universe.title || universe.key,
+      scope: universe.scope || "all",
+      ...fetched,
+      universeSize: fetched.universeSize || fetched.tickers.length
+    };
+    await saveCachedUniverse(key, table);
+    return { table, fromCache: false, error: null, fetchedAt: Date.now() };
+  } catch (err) {
+    const cached = await loadCachedUniverse(key);
+    if (cached) return { table: cached, fromCache: true, error: err.message, fetchedAt: null };
     throw err;
   }
 }
-function arrange(tickers, { sortKey, query, sector, direction = "desc" }) {
+function universeLabel(table) {
+  if (!table) return "";
+  return table.scope === "sector" ? `${table.title.toUpperCase()} ${table.universeSize}` : `TOP ${table.universeSize}`;
+}
+function describeUniverse(table) {
+  if (!table) return "";
+  return table.scope === "sector" ? `${table.universeSize} LARGEST ${table.title.toUpperCase()} COMPANIES` : `${table.universeSize} LARGEST US COMPANIES`;
+}
+function universeOptions(index) {
+  if (!index || !Array.isArray(index.universes)) return [];
+  return index.universes.map((u) => ({
+    value: u.key,
+    label: u.title.toUpperCase(),
+    count: u.size
+  }));
+}
+var findUniverse = (index, key) => {
+  const list = index && index.universes || [];
+  return list.find((u) => u.key === key) || list[0] || null;
+};
+function arrange(tickers, { sortKey, query, sector, industry, direction = "desc" }) {
   const sort = sortByKey(sortKey);
   const needle = (query || "").trim().toLowerCase();
   let rows = tickers;
@@ -599,6 +668,9 @@ function arrange(tickers, { sortKey, query, sector, direction = "desc" }) {
   }
   if (sector && sector !== "All") {
     rows = rows.filter((t) => t.sector === sector);
+  }
+  if (industry && industry !== "All") {
+    rows = rows.filter((t) => t.industry === industry);
   }
   const bestIsHigh = sort.better === "high";
   const descending = direction === "desc" ? bestIsHigh : !bestIsHigh;
@@ -616,16 +688,20 @@ function arrange(tickers, { sortKey, query, sector, direction = "desc" }) {
 function sortOptions() {
   return SORTS.map((s) => ({ value: s.key, label: s.label }));
 }
-function sectorOptions(tickers) {
+function groupOptions(tickers, field, allLabel) {
   const counts = /* @__PURE__ */ new Map();
   for (const ticker of tickers) {
-    counts.set(ticker.sector, (counts.get(ticker.sector) || 0) + 1);
+    const value = ticker[field];
+    if (!value) continue;
+    counts.set(value, (counts.get(value) || 0) + 1);
   }
   return [
-    { value: "All", label: "ALL SECTORS", count: tickers.length },
+    { value: "All", label: allLabel, count: tickers.length },
     ...Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([name, count]) => ({ value: name, label: name.toUpperCase(), count }))
   ];
 }
+var sectorOptions = (tickers) => groupOptions(tickers, "sector", "ALL SECTORS");
+var industryOptions = (tickers) => groupOptions(tickers, "industry", "ALL INDUSTRIES");
 function seriesFor(ticker, dates, sessions) {
   const points = [];
   for (let i = 0; i < ticker.history.length; i += 1) {
@@ -657,6 +733,7 @@ function changeOver(points) {
 // app/src/screens/RanksScreen.js
 import React4, { useMemo, useState as useState3 } from "react";
 import {
+  ActivityIndicator as ActivityIndicator2,
   FlatList,
   Pressable as Pressable3,
   RefreshControl,
@@ -844,15 +921,13 @@ var styles2 = StyleSheet2.create({
 var TickerRow_default = React3.memo(TickerRow);
 
 // app/src/screens/RanksScreen.js
-function describeUniverse(snapshot) {
-  const size = snapshot.universeSize;
-  const sel = snapshot.selection;
-  if (!sel || !sel.balanced) return `${size} LARGE-CAP STOCKS BY MARKET CAP`;
-  return `${size} LARGE-CAP STOCKS \xB7 ${sel.core} CORE + ${sel.balanced} SECTOR-BALANCED`;
-}
 function RanksScreen({
   snapshot,
   tickers,
+  index,
+  universeKey,
+  pendingKey,
+  onSelectUniverse,
   settings,
   watchlist,
   staleMessage,
@@ -866,27 +941,56 @@ function RanksScreen({
   onListState,
   listRef
 }) {
-  const { sortKey, direction, query, sector } = listState;
-  const [sectorOpen, setSectorOpen] = useState3(false);
+  const { sortKey, direction, query, sector, industry } = listState;
+  const [universeOpen, setUniverseOpen] = useState3(false);
+  const [cutOpen, setCutOpen] = useState3(false);
   const sort = sortByKey(sortKey);
-  const sectors = useMemo(() => sectorOptions(tickers), [tickers]);
-  const rows = useMemo(
-    () => arrange(tickers, { sortKey, query, sector, direction }),
-    [tickers, sortKey, query, sector, direction]
+  const bySector = snapshot.scope !== "sector";
+  const cut = bySector ? sector : industry;
+  const cutOptions = useMemo(
+    () => bySector ? sectorOptions(tickers) : industryOptions(tickers),
+    [bySector, tickers]
   );
+  const rows = useMemo(
+    () => arrange(tickers, { sortKey, query, sector, industry, direction }),
+    [tickers, sortKey, query, sector, industry, direction]
+  );
+  const universes = useMemo(() => universeOptions(index), [index]);
+  const switching = !!pendingKey && pendingKey !== universeKey;
+  const switchingTo = switching ? findUniverse(index, pendingKey) : null;
   const bestFirst = direction === "desc";
-  const filtered = sector !== "All" || !!query.trim();
+  const filtered = cut !== "All" || !!query.trim();
   const pickSort = (key) => {
     if (key === sortKey) onListState({ direction: bestFirst ? "asc" : "desc" });
     else onListState({ sortKey: key, direction: "desc" });
   };
   return <View3 style={styles3.wrap}>
-      <View3 style={styles3.header}>
-        <Text3 style={styles3.title} accessibilityRole="header">RANKS</Text3>
-        <Text3 style={styles3.subtitle}>
-          {describeUniverse(snapshot)} · {snapshot.dataDate}
-        </Text3>
-      </View3>
+      {
+    /* The universe is the first decision on this screen, so it heads it as a
+       control rather than sitting in a settings list three taps away. */
+  }
+      <Pressable3
+    onPress={() => {
+      tick();
+      setUniverseOpen(true);
+    }}
+    accessibilityRole="button"
+    accessibilityLabel={`Universe, ${snapshot.title}, ${snapshot.universeSize} companies. Tap to change.`}
+    style={({ pressed }) => [styles3.header, pressed && styles3.headerPressed]}
+  >
+        <View3 style={styles3.headerText}>
+          <View3 style={styles3.titleRow}>
+            <Text3 style={styles3.title} numberOfLines={1} accessibilityRole="header">
+              {snapshot.title.toUpperCase()}
+            </Text3>
+            <Text3 style={styles3.caret}>▾</Text3>
+            {switching && <ActivityIndicator2 size="small" color={C.acid} style={styles3.spinner} />}
+          </View3>
+          <Text3 style={styles3.subtitle} numberOfLines={1}>
+            {switching && switchingTo ? `LOADING ${switchingTo.title.toUpperCase()}\u2026` : `${describeUniverse(snapshot)} \xB7 ${snapshot.dataDate}`}
+          </Text3>
+        </View3>
+      </Pressable3>
 
       {!!staleMessage && <Banner text={staleMessage} />}
 
@@ -916,10 +1020,10 @@ function RanksScreen({
             </Pressable3>}
         </View3>
         <SelectButton
-    label={sector === "All" ? "ALL SECTORS" : sector.toUpperCase()}
-    active={sector !== "All"}
-    onPress={() => setSectorOpen(true)}
-    accessibilityLabel={`Sector filter, ${sector === "All" ? "all sectors" : sector}`}
+    label={cut === "All" ? bySector ? "ALL SECTORS" : "ALL INDUSTRIES" : cut.toUpperCase()}
+    active={cut !== "All"}
+    onPress={() => setCutOpen(true)}
+    accessibilityLabel={`${bySector ? "Sector" : "Industry"} filter, ${cut === "All" ? "showing all" : cut}`}
   />
       </View3>
 
@@ -955,14 +1059,14 @@ function RanksScreen({
 
       {filtered && <View3 style={styles3.summary}>
           <Text3 style={styles3.summaryText} numberOfLines={1}>
-            {sector !== "All" ? sector : "All sectors"}
+            {cut !== "All" ? cut : bySector ? "All sectors" : "All industries"}
             {query.trim() ? ` \xB7 \u201C${query.trim()}\u201D` : ""} · {rows.length}{" "}
             {rows.length === 1 ? "result" : "results"}
           </Text3>
           <Pressable3
     onPress={() => {
       tick();
-      onListState({ query: "", sector: "All" });
+      onListState({ query: "", sector: "All", industry: "All" });
     }}
     hitSlop={slop(30)}
     accessibilityRole="button"
@@ -976,9 +1080,9 @@ function RanksScreen({
     ref={listRef}
     data={rows}
     keyExtractor={(t) => t.symbol}
-    renderItem={({ item, index }) => <TickerRow_default
+    renderItem={({ item, index: i }) => <TickerRow_default
       ticker={item}
-      position={item.ranks[sort.rank] ?? index + 1}
+      position={item.ranks[sort.rank] ?? i + 1}
       sort={sort}
       settings={settings}
       starred={watchlist.includes(item.symbol)}
@@ -991,24 +1095,38 @@ function RanksScreen({
     keyboardShouldPersistTaps="handled"
     keyboardDismissMode="on-drag"
     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.acid} />}
-    ListEmptyComponent={<Empty title="NO MATCHES" hint="Nothing in the universe matches that filter." />}
+    ListEmptyComponent={<Empty title="NO MATCHES" hint="Nothing in this universe matches that filter." />}
     contentContainerStyle={rows.length ? null : { flexGrow: 1 }}
   />
 
       <SelectSheet
-    title="FILTER BY SECTOR"
-    options={sectors}
-    value={sector}
-    visible={sectorOpen}
-    onSelect={(v) => onListState({ sector: v })}
-    onClose={() => setSectorOpen(false)}
+    title="UNIVERSE"
+    hint="Each list ranks its own members, so a company places differently against the whole market than against its sector."
+    options={universes}
+    value={universeKey}
+    visible={universeOpen}
+    onSelect={onSelectUniverse}
+    onClose={() => setUniverseOpen(false)}
+  />
+      <SelectSheet
+    title={bySector ? "FILTER BY SECTOR" : "FILTER BY INDUSTRY"}
+    options={cutOptions}
+    value={cut}
+    visible={cutOpen}
+    onSelect={(v) => onListState(bySector ? { sector: v } : { industry: v })}
+    onClose={() => setCutOpen(false)}
   />
     </View3>;
 }
 var styles3 = StyleSheet3.create({
   wrap: { flex: 1 },
-  header: { paddingHorizontal: S.gutter, paddingTop: 6, paddingBottom: 12 },
-  title: { color: C.text, fontFamily: MONO, fontSize: T.title, letterSpacing: 3 },
+  header: { paddingHorizontal: S.gutter, paddingTop: 6, paddingBottom: 12, minHeight: S.tap },
+  headerPressed: { opacity: 0.6 },
+  headerText: { flexShrink: 1 },
+  titleRow: { flexDirection: "row", alignItems: "center" },
+  title: { color: C.text, fontFamily: MONO, fontSize: T.title, letterSpacing: 3, flexShrink: 1 },
+  caret: { color: C.acid, fontFamily: MONO, fontSize: T.body, marginLeft: 8 },
+  spinner: { marginLeft: 10 },
   subtitle: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.6, marginTop: 6 },
   filterRow: {
     flexDirection: "row",
@@ -1088,6 +1206,8 @@ function SettingsScreen({
   settings,
   onChange,
   snapshot,
+  index,
+  loadedCount,
   lastFetched,
   watchlistCount,
   onClearWatchlist,
@@ -1099,10 +1219,11 @@ function SettingsScreen({
   const [draftUrl, setDraftUrl] = useState4(settings.sourceUrl);
   const [sortOpen, setSortOpen] = useState4(false);
   const dirty = draftUrl.trim() !== settings.sourceUrl;
+  const universes = index && index.universes || [];
   const applyUrl = () => {
     const url = draftUrl.trim();
     if (!/^https?:\/\//i.test(url)) {
-      Alert.alert("Invalid URL", "The snapshot URL must start with http:// or https://");
+      Alert.alert("Invalid URL", "The data URL must start with http:// or https://");
       return;
     }
     onChange({ sourceUrl: url });
@@ -1145,20 +1266,40 @@ function SettingsScreen({
   />
       <Toggle
     label="Refresh on open"
-    hint="Otherwise the cached snapshot is used until you pull to refresh"
+    hint="Otherwise the cached copy is used until you pull to refresh"
     value={settings.refreshOnOpen}
     onChange={(v) => onChange({ refreshOnOpen: v })}
   />
 
-      <SectionTitle>SNAPSHOT</SectionTitle>
+      <SectionTitle>DATA</SectionTitle>
+      <Fact label="OPEN" value={`${snapshot?.title || "\u2014"} \xB7 ${snapshot?.universeSize ?? "\u2014"} tickers`} />
       <Fact label="DATA DATE" value={snapshot?.dataDate || "\u2014"} />
       <Fact
     label="BUILT"
     value={snapshot?.generatedAt?.replace("T", " ").replace("+00:00", " UTC") || "\u2014"}
   />
-      <Fact label="UNIVERSE" value={`${snapshot?.universeSize ?? "\u2014"} tickers`} />
       <Fact label="SESSIONS" value={snapshot?.sessions ?? "\u2014"} />
       <Fact label="FETCHED" value={fmtWhen(lastFetched)} />
+      <Fact
+    label="UNIVERSES"
+    value={`${universes.length} listed \xB7 ${loadedCount} on this phone`}
+  />
+
+      {
+    /* The whole index in one place, so it is obvious what the picker on the
+       Ranks screen is offering before you go looking for it. */
+  }
+      <Disclosure label="WHAT'S IN THE INDEX ›">
+        {universes.map((u) => <Fact
+    key={u.key}
+    label={u.title.toUpperCase()}
+    value={`${u.size} \xB7 ${u.file}`}
+  />)}
+        <Text4 style={styles4.hint}>
+          Each file ranks its own members, so a company sits at one place in the Top 300 and another
+          among its sector. Switch between them from the heading on the Ranks screen.
+        </Text4>
+      </Disclosure>
 
       <View4 style={styles4.actions}>
         <ActionButton
@@ -1173,8 +1314,8 @@ function SettingsScreen({
 
       <SectionTitle>STORAGE</SectionTitle>
       <Text4 style={styles4.hint}>
-        The watchlist, these settings and the last snapshot live on this phone only. There is no
-        account and no server holding any of it.
+        The watchlist, these settings and every table you have opened live on this phone only. There
+        is no account and no server holding any of it.
       </Text4>
       <View4 style={styles4.actions}>
         <ActionButton
@@ -1185,7 +1326,7 @@ function SettingsScreen({
         <ActionButton
     label="RESET ALL DATA"
     tone="danger"
-    onPress={() => confirm2("Reset everything", "Clear the watchlist, settings and cached snapshot?", onResetAll)}
+    onPress={() => confirm2("Reset everything", "Clear the watchlist, settings and every cached table?", onResetAll)}
   />
       </View4>
 
@@ -1195,7 +1336,7 @@ function SettingsScreen({
        screen. */
   }
       <Disclosure label="ADVANCED ›">
-        <Text4 style={styles4.fieldLabel}>SNAPSHOT URL</Text4>
+        <Text4 style={styles4.fieldLabel}>DATA DIRECTORY URL</Text4>
         <TextInput2
     value={draftUrl}
     onChangeText={setDraftUrl}
@@ -1204,7 +1345,7 @@ function SettingsScreen({
     multiline
     placeholder={DEFAULT_SOURCE}
     placeholderTextColor={C.faint}
-    accessibilityLabel="Snapshot URL"
+    accessibilityLabel="Data directory URL"
     style={styles4.input}
   />
         <View4 style={styles4.actions}>
@@ -1223,16 +1364,19 @@ function SettingsScreen({
   />
         </View4>
         <Text4 style={styles4.hint}>
-          Point this at any raw snapshot.json — a fork, a branch, or a local server while you are
-          testing the pipeline. Nothing is saved until you tap save, and the result of the fetch is
-          reported above.
+          A directory, not a file. The app reads index.json from it and then whichever file that
+          index names, so any fork, branch or local server holding those two things works — point it
+          somewhere and every universe in it appears in the picker. Nothing is saved until you tap
+          save, and the result of the fetch is reported above.
         </Text4>
         <Fact label="SOURCE" value={snapshot?.source || "\u2014"} />
+        <Fact label="FILE" value={snapshot?.scope === "sector" ? "sectors/\u2026json" : "snapshot.json"} />
       </Disclosure>
 
       <Text4 style={styles4.footnote}>
-        Prices are dividend-adjusted daily closes from Financial Modeling Prep, refreshed after the
-        US close. For information only — not investment advice.
+        Prices are dividend-adjusted daily closes from Financial Modeling Prep. The tables are
+        rebuilt by hand rather than on a schedule, so the data date above is the one that counts —
+        not today's. For information only, and not investment advice.
       </Text4>
 
       <SelectSheet
@@ -1477,6 +1621,7 @@ function TickerScreen({
 }) {
   const [range, setRange] = useState6("1Y");
   const swipeStart = useRef(0);
+  const scope = universeLabel(snapshot);
   const skip = snapshot.skip || {};
   const returnSkips = skip.returns || {};
   const momentumSkips = skip.momentum || (snapshot.momentum || {}).skips || {};
@@ -1633,7 +1778,7 @@ function TickerScreen({
     reason={missingReason("momentum")}
   />
           <Stat
-    label={`RANK OF ${snapshot.universeSize}`}
+    label={`RANK IN ${scope}`}
     value={fmtRank(ticker.ranks.momentum)}
     width="50%"
     reason={missingReason("momentum")}
@@ -1675,10 +1820,15 @@ function TickerScreen({
             the short end than the long.
           </Text6>
           <Text6 style={styles6.prose}>
-            This ticker is ranked against the other {snapshot.universeSize - 1} on each of those four
-            windows, and the four placings are averaged and rescaled so 100 is the strongest of the{" "}
-            {snapshot.universeSize}. A high score means winning across every timeframe, not spiking
-            in one.
+            This ticker is ranked against the other {snapshot.universeSize - 1} in {snapshot.title}{" "}
+            on each of those four windows, and the four placings are averaged and rescaled so 100 is
+            the strongest of the {snapshot.universeSize}. A high score means winning across every
+            timeframe, not spiking in one.
+          </Text6>
+          <Text6 style={styles6.prose}>
+            Every table scores itself, so the same company carries a different score in the Top 300
+            than it does among its own sector — the field it is being measured against is not the
+            same field.
           </Text6>
           <Text6 style={styles6.prose}>
             It stays blank until a company has traded about 13 months — the 12-month window plus the
@@ -1687,7 +1837,7 @@ function TickerScreen({
           </Text6>
         </Disclosure>
 
-        <SectionTitle>RANK IN TOP {snapshot.universeSize}</SectionTitle>
+        <SectionTitle>RANK IN {scope}</SectionTitle>
         <View6 style={styles6.grid}>
           <Stat label="MARKET CAP" value={fmtRank(ticker.ranks.marketCap)} color={C.acid} />
           <Stat label="1 MONTH" value={fmtRank(ticker.ranks.return_1m)} />
@@ -1698,6 +1848,11 @@ function TickerScreen({
           <Stat label="RETURN/RISK" value={fmtRank(ticker.ranks.riskAdjusted)} />
           <Stat label="LOW VOL" value={fmtRank(ticker.ranks.volatility)} />
         </View6>
+
+        <Text6 style={styles6.note}>
+          Placings run 1 to {snapshot.universeSize} within {snapshot.title}
+          {snapshot.scope === "sector" ? " \u2014 this company against its own sector, not the whole market." : "."}
+        </Text6>
 
         <Text6 style={styles6.footnote}>
           Dividend-adjusted closes, {ticker.firstSession} to {ticker.asOf}.
@@ -1793,8 +1948,8 @@ import React8, { useMemo as useMemo4 } from "react";
 import { FlatList as FlatList2, RefreshControl as RefreshControl2, StyleSheet as StyleSheet7, Text as Text7, View as View7 } from "react-native";
 function WatchlistScreen({
   tickers,
+  pending,
   settings,
-  watchlist,
   onOpen,
   onToggleStar,
   onRefresh,
@@ -1804,22 +1959,19 @@ function WatchlistScreen({
   listRef
 }) {
   const { sortKey } = listState;
-  const held = useMemo4(
-    () => tickers.filter((t) => watchlist.includes(t.symbol)),
-    [tickers, watchlist]
-  );
-  const rows = useMemo4(() => arrange(held, { sortKey, direction: "desc" }), [held, sortKey]);
+  const rows = useMemo4(() => arrange(tickers, { sortKey, direction: "desc" }), [tickers, sortKey]);
   const average = useMemo4(() => {
-    if (!held.length) return null;
-    return held.reduce((sum, t) => sum + (t.changePct || 0), 0) / held.length;
-  }, [held]);
+    if (!tickers.length) return null;
+    return tickers.reduce((sum, t) => sum + (t.changePct || 0), 0) / tickers.length;
+  }, [tickers]);
   const sort = sortByKey(sortKey);
   return <View7 style={styles7.wrap}>
       <View7 style={styles7.header}>
         <View7 style={styles7.headerText}>
           <Text7 style={styles7.title} accessibilityRole="header">WATCHLIST</Text7>
           <Text7 style={styles7.subtitle}>
-            {held.length} {held.length === 1 ? "TICKER" : "TICKERS"} TRACKED
+            {tickers.length} {tickers.length === 1 ? "TICKER" : "TICKERS"} TRACKED
+            {pending > 0 ? ` \xB7 LOADING ${pending} MORE` : ""}
           </Text7>
         </View7>
         {average !== null && <View7
@@ -1831,7 +1983,7 @@ function WatchlistScreen({
           </View7>}
       </View7>
 
-      {held.length > 0 && <ChipRow accessibilityLabel="Sort watchlist by metric">
+      {tickers.length > 0 && <ChipRow accessibilityLabel="Sort watchlist by metric">
           {SORTS.map((s) => <Chip
     key={s.key}
     label={s.short}
@@ -1841,13 +1993,24 @@ function WatchlistScreen({
   />)}
         </ChipRow>}
 
+      {tickers.length > 0 && // The numbers down the left are places within this list. A rank carried
+  // over from a table would be meaningless here: these names come from
+  // whichever universes they were starred in, and #4 of the Top 300 sits
+  // beside #4 of a hundred utilities without the two being comparable.
+  <View7 style={styles7.columns}>
+          <Text7 style={styles7.colLeft}>#  IN THIS LIST</Text7>
+          <Text7 style={styles7.colRight}>
+            PRICE / <Text7 style={styles7.colMetric}>{sort.label}</Text7>
+          </Text7>
+        </View7>}
+
       <FlatList2
     ref={listRef}
     data={rows}
     keyExtractor={(t) => t.symbol}
     renderItem={({ item, index }) => <TickerRow_default
       ticker={item}
-      position={item.ranks[sort.rank] ?? index + 1}
+      position={index + 1}
       sort={sort}
       settings={settings}
       starred
@@ -1857,7 +2020,7 @@ function WatchlistScreen({
     refreshControl={<RefreshControl2 refreshing={refreshing} onRefresh={onRefresh} tintColor={C.acid} />}
     ListEmptyComponent={<Empty
       title="NOTHING TRACKED YET"
-      hint="Tap the star beside any row on the Ranks screen, or open a ticker and tap WATCH."
+      hint="Tap the star beside any row on the Ranks screen, or open a ticker and tap WATCH. Stars from every universe land here together."
     />}
     contentContainerStyle={rows.length ? null : { flexGrow: 1 }}
   />
@@ -1878,7 +2041,20 @@ var styles7 = StyleSheet7.create({
   subtitle: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8, marginTop: 6 },
   avgBox: { alignItems: "flex-end" },
   avgLabel: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.6 },
-  avgValue: { fontFamily: MONO, fontSize: T.large, marginTop: 4 }
+  avgValue: { fontFamily: MONO, fontSize: T.large, marginTop: 4 },
+  columns: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingHorizontal: S.gutter,
+    paddingBottom: 8,
+    paddingTop: 4,
+    borderBottomWidth: S.hairline,
+    borderBottomColor: C.line
+  },
+  colLeft: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8 },
+  colRight: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8 },
+  colMetric: { color: C.text }
 });
 
 // app/App.js
@@ -1891,11 +2067,17 @@ var SPARK_SESSIONS = 90;
 var SPARK_POINTS = 24;
 var FEEDBACK_MS = 6e3;
 var UNDO_MS = 6e3;
+var decorate = (table) => table.tickers.map((t) => {
+  const points = seriesFor(t, table.dates, SPARK_SESSIONS);
+  return { ...t, spark: downsample(points, SPARK_POINTS), sparkChange: changeOver(points) };
+});
 function App() {
   const [ready, setReady] = useState7(false);
   const [settings, setSettings] = useState7(DEFAULT_SETTINGS);
   const [watchlist, setWatchlist] = useState7([]);
-  const [snapshot, setSnapshot] = useState7(null);
+  const [index, setIndex] = useState7(null);
+  const [tables, setTables] = useState7({});
+  const [pendingKey, setPendingKey] = useState7(null);
   const [tab, setTab] = useState7("ranks");
   const [openSymbol, setOpenSymbol] = useState7(null);
   const [refreshing, setRefreshing] = useState7(false);
@@ -1908,15 +2090,19 @@ function App() {
     sortKey: DEFAULT_SETTINGS.defaultSort,
     direction: "desc",
     query: "",
-    sector: "All"
+    sector: "All",
+    industry: "All"
   });
   const [watchState, setWatchState] = useState7({ sortKey: "change" });
   const ranksList = useRef2(null);
   const watchList = useRef2(null);
   const settingsRef = useRef2(settings);
   settingsRef.current = settings;
+  const skipHydrate = useRef2(/* @__PURE__ */ new Set());
   const patchRanks = useCallback((p) => setRanksState((prev) => ({ ...prev, ...p })), []);
   const patchWatch = useCallback((p) => setWatchState((prev) => ({ ...prev, ...p })), []);
+  const universeKey = settings.universeKey;
+  const snapshot = tables[universeKey] || null;
   useEffect(() => {
     setHapticsEnabled(settings.haptics);
   }, [settings.haptics]);
@@ -1930,42 +2116,59 @@ function App() {
     const timer = setTimeout(() => setUndoItem(null), UNDO_MS);
     return () => clearTimeout(timer);
   }, [undoItem]);
+  const store = useCallback((key, table) => {
+    setTables((prev) => ({ ...prev, [key]: table }));
+  }, []);
   const refresh = useCallback(async (urlOverride) => {
     const url = typeof urlOverride === "string" ? urlOverride : settingsRef.current.sourceUrl;
     setRefreshing(true);
     try {
-      const result = await fetchSnapshot(url);
-      setSnapshot(result.snapshot);
+      const listing = await fetchIndex(url);
+      setIndex(listing.index);
+      const wanted = settingsRef.current.universeKey;
+      const universe = findUniverse(listing.index, wanted);
+      if (!universe) throw new Error("That source lists no universes");
+      const result = await fetchUniverse(url, universe);
+      store(universe.key, result.table);
+      if (universe.key !== wanted) {
+        setSettings((prev) => {
+          const next = { ...prev, universeKey: universe.key };
+          saveSettings(next);
+          return next;
+        });
+      }
       setFatal(null);
       setNotice(
-        result.fromCache ? `OFFLINE \u2014 SHOWING CACHED ${result.snapshot.dataDate} (${result.error})` : null
+        result.fromCache ? `OFFLINE \u2014 SHOWING CACHED ${result.table.dataDate} (${result.error})` : null
       );
       if (result.fetchedAt) setLastFetched(new Date(result.fetchedAt).toISOString());
       setRefreshResult(
-        result.fromCache ? { ok: false, message: `Could not reach the source (${result.error}). Showing the cached ${result.snapshot.dataDate} snapshot.` } : { ok: true, message: `Updated just now \u2014 ${result.snapshot.universeSize} tickers, data date ${result.snapshot.dataDate}.` }
+        result.fromCache ? { ok: false, message: `Could not reach the source (${result.error}). Showing the cached ${result.table.dataDate} copy of ${result.table.title}.` } : { ok: true, message: `Updated just now \u2014 ${result.table.title}, ${result.table.universeSize} tickers, data date ${result.table.dataDate}.` }
       );
     } catch (err) {
-      setFatal(err.message || "Could not load the snapshot");
-      setRefreshResult({ ok: false, message: err.message || "Could not load the snapshot." });
+      setFatal(err.message || "Could not load the data");
+      setRefreshResult({ ok: false, message: err.message || "Could not load the data." });
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [store]);
   useEffect(() => {
     (async () => {
-      const [storedSettings, storedWatchlist, cached] = await Promise.all([
+      const [storedSettings, storedWatchlist, cachedIndex] = await Promise.all([
         loadSettings(),
         loadWatchlist(),
-        loadCachedSnapshot()
+        loadCachedIndex()
       ]);
       setSettings(storedSettings);
       setWatchlist(storedWatchlist);
       patchRanks({ sortKey: storedSettings.defaultSort });
-      if (cached) setSnapshot(cached);
+      if (cachedIndex) setIndex(cachedIndex);
+      const cachedTable = await loadCachedUniverse(storedSettings.universeKey);
+      if (cachedTable) store(storedSettings.universeKey, cachedTable);
       setReady(true);
-      if (storedSettings.refreshOnOpen || !cached) await refresh();
+      if (storedSettings.refreshOnOpen || !cachedTable) await refresh();
     })();
-  }, [refresh, patchRanks]);
+  }, [refresh, patchRanks, store]);
   const updateSettings = useCallback((patch) => {
     setSettings((prev) => {
       const next = { ...prev, ...patch };
@@ -1974,6 +2177,60 @@ function App() {
     });
     if (patch.defaultSort) patchRanks({ sortKey: patch.defaultSort, direction: "desc" });
   }, [patchRanks]);
+  const selectUniverse = useCallback(async (key) => {
+    if (key === settingsRef.current.universeKey) return;
+    const universe = findUniverse(index, key);
+    if (!universe) return;
+    const url = settingsRef.current.sourceUrl;
+    const commit = () => {
+      updateSettings({ universeKey: key });
+      patchRanks({ sector: "All", industry: "All" });
+      if (ranksList.current) ranksList.current.scrollToOffset({ offset: 0, animated: false });
+    };
+    setPendingKey(key);
+    try {
+      if (!tables[key]) {
+        const cached = await loadCachedUniverse(key);
+        if (cached) {
+          store(key, cached);
+          commit();
+        }
+      }
+      const result = await fetchUniverse(url, universe);
+      store(key, result.table);
+      commit();
+      setNotice(
+        result.fromCache ? `OFFLINE \u2014 SHOWING CACHED ${result.table.dataDate} (${result.error})` : null
+      );
+      if (result.fetchedAt) setLastFetched(new Date(result.fetchedAt).toISOString());
+    } catch (err) {
+      setRefreshResult({ ok: false, message: `Could not load ${universe.title} (${err.message}).` });
+    } finally {
+      setPendingKey(null);
+    }
+  }, [index, tables, store, updateSettings, patchRanks]);
+  useEffect(() => {
+    if (!ready || !index || !watchlist.length) return;
+    const have = /* @__PURE__ */ new Set();
+    for (const table of Object.values(tables)) {
+      for (const t of table.tickers) have.add(t.symbol);
+    }
+    if (watchlist.every((s) => have.has(s))) return;
+    const next = index.universes.find((u) => !tables[u.key] && !skipHydrate.current.has(u.key));
+    if (!next) return;
+    let live = true;
+    (async () => {
+      try {
+        const result = await fetchUniverse(settingsRef.current.sourceUrl, next);
+        if (live) store(next.key, result.table);
+      } catch (err) {
+        skipHydrate.current.add(next.key);
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [ready, index, watchlist, tables, store]);
   const toggleStar = useCallback((symbol) => {
     setWatchlist((prev) => {
       const removing = prev.includes(symbol);
@@ -2000,23 +2257,43 @@ function App() {
   const resetAll = useCallback(async () => {
     await clearAll();
     setWatchlist([]);
+    setTables({});
     setSettings(DEFAULT_SETTINGS);
+    skipHydrate.current = /* @__PURE__ */ new Set();
     await refresh(DEFAULT_SETTINGS.sourceUrl);
   }, [refresh]);
   const markScrubbed = useCallback(() => {
     if (!settingsRef.current.hasScrubbed) updateSettings({ hasScrubbed: true });
   }, [updateSettings]);
-  const tickers = useMemo5(() => {
-    if (!snapshot) return [];
-    return snapshot.tickers.map((t) => {
-      const points = seriesFor(t, snapshot.dates, SPARK_SESSIONS);
-      return { ...t, spark: downsample(points, SPARK_POINTS), sparkChange: changeOver(points) };
+  const tickers = useMemo5(() => snapshot ? decorate(snapshot) : [], [snapshot]);
+  const watchTickers = useMemo5(() => {
+    if (!watchlist.length) return [];
+    const wanted = new Set(watchlist);
+    const found = /* @__PURE__ */ new Map();
+    const order = [
+      ...Object.keys(tables).filter((k) => k !== universeKey),
+      ...tables[universeKey] ? [universeKey] : []
+    ];
+    for (const key of order) {
+      const table = tables[key];
+      for (const t of table.tickers) {
+        if (wanted.has(t.symbol)) found.set(t.symbol, { table, ticker: t });
+      }
+    }
+    return Array.from(found.values()).map(({ table, ticker }) => {
+      const points = seriesFor(ticker, table.dates, SPARK_SESSIONS);
+      return { ...ticker, spark: downsample(points, SPARK_POINTS), sparkChange: changeOver(points) };
     });
-  }, [snapshot]);
-  const openTicker = useMemo5(
-    () => tickers.find((t) => t.symbol === openSymbol) || null,
-    [tickers, openSymbol]
-  );
+  }, [watchlist, tables, universeKey]);
+  const openTicker = useMemo5(() => {
+    if (!openSymbol) return null;
+    const here = tickers.find((t) => t.symbol === openSymbol);
+    if (here) return { ticker: here, table: snapshot };
+    const other = watchTickers.find((t) => t.symbol === openSymbol);
+    if (!other) return null;
+    const table = Object.values(tables).find((tb) => tb.tickers.some((t) => t.symbol === openSymbol));
+    return table ? { ticker: other, table } : null;
+  }, [openSymbol, tickers, snapshot, watchTickers, tables]);
   const onTab = (key) => {
     if (key === tab) {
       const list = key === "ranks" ? ranksList.current : key === "watchlist" ? watchList.current : null;
@@ -2032,16 +2309,16 @@ function App() {
   if (!ready || !snapshot && !fatal) {
     return <SafeAreaView style={styles8.app}>
         <StatusBar barStyle="light-content" />
-        <Loading label="FETCHING SNAPSHOT" />
+        <Loading label="FETCHING DATA" />
       </SafeAreaView>;
   }
   if (!snapshot && fatal) {
     return <SafeAreaView style={styles8.app}>
         <StatusBar barStyle="light-content" />
         <View8 style={styles8.fatal}>
-          <Text8 style={styles8.fatalTitle} accessibilityRole="header">NO SNAPSHOT</Text8>
+          <Text8 style={styles8.fatalTitle} accessibilityRole="header">NO DATA</Text8>
           <Text8 style={styles8.fatalText}>{fatal}</Text8>
-          <Text8 style={styles8.fatalHint}>Check the snapshot URL under Settings, then try again.</Text8>
+          <Text8 style={styles8.fatalHint}>Check the data URL under Settings, then try again.</Text8>
           <View8 style={styles8.fatalActions}>
             <ActionButton label={refreshing ? "RETRYING\u2026" : "RETRY"} busy={refreshing} onPress={() => refresh()} />
             <ActionButton label="OPEN SETTINGS" onPress={() => {
@@ -2072,6 +2349,10 @@ function App() {
           <RanksScreen
     snapshot={snapshot}
     tickers={tickers}
+    index={index}
+    universeKey={universeKey}
+    pendingKey={pendingKey}
+    onSelectUniverse={selectUniverse}
     staleMessage={notice}
     listState={ranksState}
     onListState={patchRanks}
@@ -2081,7 +2362,8 @@ function App() {
         </View8>
         <View8 style={tab === "watchlist" ? styles8.pane : styles8.paneHidden}>
           <WatchlistScreen
-    tickers={tickers}
+    tickers={watchTickers}
+    pending={watchlist.length - watchTickers.length}
     listState={watchState}
     onListState={patchWatch}
     listRef={watchList}
@@ -2093,6 +2375,8 @@ function App() {
     settings={settings}
     onChange={updateSettings}
     snapshot={snapshot}
+    index={index}
+    loadedCount={Object.keys(tables).length}
     lastFetched={lastFetched}
     watchlistCount={watchlist.length}
     onClearWatchlist={clearWatchlist}
@@ -2109,9 +2393,9 @@ function App() {
   }
         {openTicker && <View8 style={styles8.overlay}>
             <TickerScreen
-    ticker={openTicker}
-    snapshot={snapshot}
-    starred={watchlist.includes(openTicker.symbol)}
+    ticker={openTicker.ticker}
+    snapshot={openTicker.table}
+    starred={watchlist.includes(openTicker.ticker.symbol)}
     onBack={() => setOpenSymbol(null)}
     onToggleStar={toggleStar}
     hintScrub={!settings.hasScrubbed}

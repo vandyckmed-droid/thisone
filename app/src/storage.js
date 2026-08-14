@@ -7,13 +7,17 @@ import { DEFAULT_SOURCE } from './source';
 const K = {
   watchlist: '@top100/watchlist',
   settings: '@top100/settings',
-  snapshot: '@top100/snapshot',
+  index: '@top100/index',
+  // Each universe caches under its own key, so switching between them is
+  // instant after the first visit and every one of them survives going offline.
+  universe: (key) => `@top100/universe/${key}`,
 };
 
 export { DEFAULT_SOURCE };
 
 export const DEFAULT_SETTINGS = {
   sourceUrl: DEFAULT_SOURCE,
+  universeKey: 'all',
   defaultSort: 'marketCap',
   showLogos: true,
   showSparklines: true,
@@ -52,12 +56,16 @@ export const loadSettings = async () => ({
 });
 export const saveSettings = (settings) => write(K.settings, settings);
 
-export const loadCachedSnapshot = () => read(K.snapshot, null);
-export const saveCachedSnapshot = (snapshot) => write(K.snapshot, snapshot);
+export const loadCachedIndex = () => read(K.index, null);
+export const saveCachedIndex = (index) => write(K.index, index);
+
+export const loadCachedUniverse = (key) => read(K.universe(key), null);
+export const saveCachedUniverse = (key, table) => write(K.universe(key), table);
 
 export const clearAll = async () => {
   try {
-    await AsyncStorage.multiRemove([K.watchlist, K.settings, K.snapshot]);
+    const keys = await AsyncStorage.getAllKeys();
+    await AsyncStorage.multiRemove(keys.filter((k) => k.startsWith('@top100/')));
     return true;
   } catch (err) {
     return false;

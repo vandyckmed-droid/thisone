@@ -37,6 +37,7 @@ FILES = [
     "src/components/PriceChart.js",
     "src/components/TickerRow.js",
     "src/components/UI.js",
+    "src/components/svg.js",
     "src/screens/RanksScreen.js",
     "src/screens/WatchlistScreen.js",
     "src/screens/TickerScreen.js",
@@ -54,28 +55,45 @@ def raw_url(branch: str, path: str) -> str:
     )
 
 
-def snapshot_url(branch: str) -> str:
+def data_url(branch: str) -> str:
+    """The directory holding index.json, not a single file."""
     return (
         f"https://raw.githubusercontent.com/{OWNER}/{REPO}/"
-        f"refs/heads/{branch}/data/snapshot.json"
+        f"refs/heads/{branch}/data/"
+    )
+
+
+def source_module(branch: str) -> str:
+    """A drop-in replacement for src/source.js pinned to `branch`.
+
+    It has to carry `normaliseBase` too -- data.js imports it, so emitting only
+    the constant would leave the preview link importing a name that is not
+    there.
+    """
+    return (
+        "export const DEFAULT_SOURCE =\n"
+        f"  '{data_url(branch)}';\n"
+        "\n"
+        "export const normaliseBase = (url) => {\n"
+        "  const trimmed = (url || '').trim();\n"
+        "  const withoutFile = trimmed.replace(/(index|snapshot)\\.json$/i, '');\n"
+        "  return withoutFile.endsWith('/') ? withoutFile : `${withoutFile}/`;\n"
+        "};\n"
     )
 
 
 def build(branch: str, data_branch: str | None = None) -> str:
     files = {path: {"type": "CODE", "url": raw_url(branch, path)} for path in FILES}
 
-    # Before the app's branch is merged, main has no snapshot.json to read. The
-    # one module holding that default is small enough to inline, so a preview
-    # link opens against real data instead of the error screen.
+    # Before the app's branch is merged, main may not hold the data the branch
+    # expects. The one module naming that directory is small enough to inline,
+    # so a preview link opens against real data instead of the error screen.
     if data_branch:
-        files["src/source.js"] = {
-            "type": "CODE",
-            "contents": f"export const DEFAULT_SOURCE =\n  '{snapshot_url(data_branch)}';\n",
-        }
+        files["src/source.js"] = {"type": "CODE", "contents": source_module(data_branch)}
 
     query = {
-        "name": "Top 100",
-        "description": "Top 100 US stocks by market cap, ranked daily",
+        "name": "Top 300",
+        "description": "Top 300 US stocks and the top 100 per sector, ranked",
         "files": json.dumps(files, separators=(",", ":")),
         "dependencies": ",".join(DEPENDENCIES),
         "platform": "mydevice",   # opens on the QR pane for Expo Go
@@ -111,8 +129,8 @@ def main() -> int:
     parser.add_argument("--branch", default="main",
                         help="branch holding the app source")
     parser.add_argument("--data-branch", default=None,
-                        help="pin snapshot.json to this branch (default: whatever "
-                             "src/source.js says, i.e. main)")
+                        help="pin the data directory to this branch (default: "
+                             "whatever src/source.js says, i.e. main)")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
 

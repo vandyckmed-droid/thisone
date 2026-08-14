@@ -39,6 +39,8 @@ export default function SettingsScreen({
   settings,
   onChange,
   snapshot,
+  index,
+  loadedCount,
   lastFetched,
   watchlistCount,
   onClearWatchlist,
@@ -50,13 +52,14 @@ export default function SettingsScreen({
   const [draftUrl, setDraftUrl] = useState(settings.sourceUrl);
   const [sortOpen, setSortOpen] = useState(false);
   const dirty = draftUrl.trim() !== settings.sourceUrl;
+  const universes = (index && index.universes) || [];
 
   /** Saving and refreshing are one action: a URL you cannot see the result of
    *  is worse than no URL field at all. */
   const applyUrl = () => {
     const url = draftUrl.trim();
     if (!/^https?:\/\//i.test(url)) {
-      Alert.alert('Invalid URL', 'The snapshot URL must start with http:// or https://');
+      Alert.alert('Invalid URL', 'The data URL must start with http:// or https://');
       return;
     }
     onChange({ sourceUrl: url });
@@ -103,20 +106,40 @@ export default function SettingsScreen({
       />
       <Toggle
         label="Refresh on open"
-        hint="Otherwise the cached snapshot is used until you pull to refresh"
+        hint="Otherwise the cached copy is used until you pull to refresh"
         value={settings.refreshOnOpen}
         onChange={(v) => onChange({ refreshOnOpen: v })}
       />
 
-      <SectionTitle>SNAPSHOT</SectionTitle>
+      <SectionTitle>DATA</SectionTitle>
+      <Fact label="OPEN" value={`${snapshot?.title || '—'} · ${snapshot?.universeSize ?? '—'} tickers`} />
       <Fact label="DATA DATE" value={snapshot?.dataDate || '—'} />
       <Fact
         label="BUILT"
         value={snapshot?.generatedAt?.replace('T', ' ').replace('+00:00', ' UTC') || '—'}
       />
-      <Fact label="UNIVERSE" value={`${snapshot?.universeSize ?? '—'} tickers`} />
       <Fact label="SESSIONS" value={snapshot?.sessions ?? '—'} />
       <Fact label="FETCHED" value={fmtWhen(lastFetched)} />
+      <Fact
+        label="UNIVERSES"
+        value={`${universes.length} listed · ${loadedCount} on this phone`}
+      />
+
+      {/* The whole index in one place, so it is obvious what the picker on the
+          Ranks screen is offering before you go looking for it. */}
+      <Disclosure label="WHAT'S IN THE INDEX ›">
+        {universes.map((u) => (
+          <Fact
+            key={u.key}
+            label={u.title.toUpperCase()}
+            value={`${u.size} · ${u.file}`}
+          />
+        ))}
+        <Text style={styles.hint}>
+          Each file ranks its own members, so a company sits at one place in the Top 300 and another
+          among its sector. Switch between them from the heading on the Ranks screen.
+        </Text>
+      </Disclosure>
 
       <View style={styles.actions}>
         <ActionButton
@@ -133,8 +156,8 @@ export default function SettingsScreen({
 
       <SectionTitle>STORAGE</SectionTitle>
       <Text style={styles.hint}>
-        The watchlist, these settings and the last snapshot live on this phone only. There is no
-        account and no server holding any of it.
+        The watchlist, these settings and every table you have opened live on this phone only. There
+        is no account and no server holding any of it.
       </Text>
       <View style={styles.actions}>
         <ActionButton
@@ -148,7 +171,7 @@ export default function SettingsScreen({
           label="RESET ALL DATA"
           tone="danger"
           onPress={() =>
-            confirm('Reset everything', 'Clear the watchlist, settings and cached snapshot?', onResetAll)
+            confirm('Reset everything', 'Clear the watchlist, settings and every cached table?', onResetAll)
           }
         />
       </View>
@@ -157,7 +180,7 @@ export default function SettingsScreen({
           irrelevant every other day, so it folds away rather than heading the
           screen. */}
       <Disclosure label="ADVANCED ›">
-        <Text style={styles.fieldLabel}>SNAPSHOT URL</Text>
+        <Text style={styles.fieldLabel}>DATA DIRECTORY URL</Text>
         <TextInput
           value={draftUrl}
           onChangeText={setDraftUrl}
@@ -166,7 +189,7 @@ export default function SettingsScreen({
           multiline
           placeholder={DEFAULT_SOURCE}
           placeholderTextColor={C.faint}
-          accessibilityLabel="Snapshot URL"
+          accessibilityLabel="Data directory URL"
           style={styles.input}
         />
         <View style={styles.actions}>
@@ -185,16 +208,19 @@ export default function SettingsScreen({
           />
         </View>
         <Text style={styles.hint}>
-          Point this at any raw snapshot.json — a fork, a branch, or a local server while you are
-          testing the pipeline. Nothing is saved until you tap save, and the result of the fetch is
-          reported above.
+          A directory, not a file. The app reads index.json from it and then whichever file that
+          index names, so any fork, branch or local server holding those two things works — point it
+          somewhere and every universe in it appears in the picker. Nothing is saved until you tap
+          save, and the result of the fetch is reported above.
         </Text>
         <Fact label="SOURCE" value={snapshot?.source || '—'} />
+        <Fact label="FILE" value={snapshot?.scope === 'sector' ? 'sectors/…json' : 'snapshot.json'} />
       </Disclosure>
 
       <Text style={styles.footnote}>
-        Prices are dividend-adjusted daily closes from Financial Modeling Prep, refreshed after the
-        US close. For information only — not investment advice.
+        Prices are dividend-adjusted daily closes from Financial Modeling Prep. The tables are
+        rebuilt by hand rather than on a schedule, so the data date above is the one that counts —
+        not today's. For information only, and not investment advice.
       </Text>
 
       <SelectSheet
