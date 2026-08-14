@@ -36,9 +36,9 @@ plainly that Expo Go is the part that is broken.
 ### Standing link
 
 ```
-exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=ItepA5YhdjXzAUwMHEXB9
-https://snack.expo.dev/ItepA5YhdjXzAUwMHEXB9
-https://snack.expo.dev/ItepA5YhdjXzAUwMHEXB9?platform=web   <- works while Expo Go's runtime is 429ing
+exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=-OKwkj7qndiRFN1Y3vLng
+https://snack.expo.dev/-OKwkj7qndiRFN1Y3vLng
+https://snack.expo.dev/-OKwkj7qndiRFN1Y3vLng?platform=web   <- works while Expo Go's runtime is 429ing
 ```
 
 Keep this block current — it is the answer to "what do I tap right now".

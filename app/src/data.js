@@ -31,12 +31,18 @@ export const RANGES = [
   { key: 'MAX', sessions: Infinity },
 ];
 
-const bust = (url) => `${url}${url.includes('?') ? '&' : '?'}t=${Date.now()}`;
+// The buster exists to step past a stale CDN entry once GitHub's five-minute
+// window rolls over — not to make every request unique, which is what a raw
+// `t=${Date.now()}` did. That defeated the CDN *and* the phone's own HTTP
+// cache, so every single launch re-downloaded a megabyte of history it had
+// fetched minutes earlier. Busting once per window keeps the same worst-case
+// freshness while a relaunch inside it paints from local cache in milliseconds.
+const BUST_WINDOW_MS = 5 * 60 * 1000;
+const bust = (url) =>
+  `${url}${url.includes('?') ? '&' : '?'}t=${Math.floor(Date.now() / BUST_WINDOW_MS)}`;
 
 async function getJson(url) {
-  // GitHub's raw CDN caches aggressively; the cache-buster keeps a fresh table
-  // from taking minutes to reach the phone.
-  const res = await fetch(bust(url), { headers: { 'Cache-Control': 'no-cache' } });
+  const res = await fetch(bust(url));
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
