@@ -9,8 +9,8 @@ import {
   View,
 } from 'react-native';
 import TickerRow from '../components/TickerRow';
-import { Banner, Chip, ChipRow, Empty } from '../components/UI';
-import { SORTS, arrange, sectorsOf, sortByKey } from '../data';
+import { Banner, Chip, ChipRow, Empty, SelectButton, SelectSheet } from '../components/UI';
+import { SORTS, arrange, sectorOptions, sortByKey } from '../data';
 import { C, MONO, S } from '../theme';
 
 const ROW_HEIGHT = 57;
@@ -31,8 +31,11 @@ export default function RanksScreen({
   const [query, setQuery] = useState('');
   const [sector, setSector] = useState('All');
 
+  const [sectorOpen, setSectorOpen] = useState(false);
+
   const sort = sortByKey(sortKey);
-  const sectors = useMemo(() => sectorsOf(tickers), [tickers]);
+  const sectors = useMemo(() => sectorOptions(tickers), [tickers]);
+  const sectorLabel = sector === 'All' ? 'ALL SECTORS' : sector.toUpperCase();
   const rows = useMemo(
     () => arrange(tickers, { sortKey, query, sector, direction }),
     [tickers, sortKey, query, sector, direction]
@@ -64,15 +67,22 @@ export default function RanksScreen({
 
       {!!staleMessage && <Banner text={staleMessage} />}
 
-      <TextInput
-        value={query}
-        onChangeText={setQuery}
-        placeholder="SEARCH SYMBOL OR NAME"
-        placeholderTextColor={C.faint}
-        autoCapitalize="characters"
-        autoCorrect={false}
-        style={styles.search}
-      />
+      <View style={styles.filterRow}>
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="SEARCH SYMBOL OR NAME"
+          placeholderTextColor={C.faint}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          style={styles.search}
+        />
+        <SelectButton
+          label={sectorLabel}
+          active={sector !== 'All'}
+          onPress={() => setSectorOpen(true)}
+        />
+      </View>
 
       <ChipRow>
         {SORTS.map((s) => (
@@ -81,18 +91,6 @@ export default function RanksScreen({
             label={s.short}
             active={s.key === sortKey}
             onPress={() => pickSort(s.key)}
-          />
-        ))}
-      </ChipRow>
-
-      <ChipRow>
-        {sectors.map((name) => (
-          <Chip
-            key={name}
-            compact
-            label={name === 'All' ? 'ALL SECTORS' : name.toUpperCase()}
-            active={name === sector}
-            onPress={() => setSector(name)}
           />
         ))}
       </ChipRow>
@@ -135,6 +133,14 @@ export default function RanksScreen({
         }
         contentContainerStyle={rows.length ? null : { flexGrow: 1 }}
       />
+      <SelectSheet
+        title="FILTER BY SECTOR"
+        options={sectors}
+        value={sector}
+        visible={sectorOpen}
+        onSelect={setSector}
+        onClose={() => setSectorOpen(false)}
+      />
     </View>
   );
 }
@@ -152,9 +158,15 @@ const styles = StyleSheet.create({
   title: { color: C.text, fontFamily: MONO, fontSize: 19, letterSpacing: 3 },
   subtitle: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1, marginTop: 4 },
   direction: { color: C.acid, fontFamily: MONO, fontSize: 10, letterSpacing: 1, paddingTop: 6 },
-  search: {
+  filterRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
     marginHorizontal: S.gutter,
     marginBottom: 10,
+  },
+  search: {
+    flex: 1,
+    marginRight: 8,
     paddingHorizontal: 11,
     paddingVertical: 9,
     backgroundColor: C.surface,

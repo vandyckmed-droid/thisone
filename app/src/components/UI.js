@@ -1,5 +1,13 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { tick } from '../haptics';
 import { C, MONO, S } from '../theme';
 
@@ -83,6 +91,72 @@ export function Disclosure({ label, children }) {
   );
 }
 
+/**
+ * One control that opens a list, for a setting with more options than deserve
+ * permanent space on screen.
+ */
+export function SelectSheet({ title, options, value, visible, onSelect, onClose }) {
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+        {/* The inner press is swallowed so tapping the sheet itself does not
+            dismiss it; only the backdrop does. */}
+        <Pressable style={styles.sheet} onPress={() => {}}>
+          <Text style={styles.sheetTitle}>{title}</Text>
+          <ScrollView bounces={false}>
+            {options.map((option) => {
+              const active = option.value === value;
+              return (
+                <Pressable
+                  key={option.value}
+                  onPress={() => {
+                    tick();
+                    onSelect(option.value);
+                    onClose();
+                  }}
+                  style={({ pressed }) => [styles.sheetRow, pressed && styles.sheetRowPressed]}
+                >
+                  <Text style={[styles.sheetLabel, active && styles.sheetLabelActive]}>
+                    {option.label}
+                  </Text>
+                  <Text style={[styles.sheetCount, active && styles.sheetLabelActive]}>
+                    {active ? `${option.count}  ✓` : option.count}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/** The control that opens a SelectSheet, showing what is currently chosen. */
+export function SelectButton({ label, active, onPress }) {
+  return (
+    <Pressable
+      onPress={() => {
+        tick();
+        onPress();
+      }}
+      style={({ pressed }) => [
+        styles.select,
+        active && styles.selectActive,
+        pressed && styles.selectPressed,
+      ]}
+    >
+      <Text
+        numberOfLines={1}
+        style={[styles.selectText, active && styles.selectTextActive]}
+      >
+        {label}
+      </Text>
+      <Text style={[styles.selectMark, active && styles.selectTextActive]}>▾</Text>
+    </Pressable>
+  );
+}
+
 export function SectionTitle({ children, right }) {
   return (
     <View style={styles.sectionRow}>
@@ -139,6 +213,67 @@ const styles = StyleSheet.create({
   // pill once letterSpacing is applied.
   chipText: { color: C.dim, fontFamily: MONO, fontSize: 10, lineHeight: 13, letterSpacing: 0.8 },
   chipTextActive: { color: C.bg },
+
+  select: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    borderRadius: S.radius,
+    borderWidth: S.hairline,
+    borderColor: C.line,
+    backgroundColor: C.surface,
+    maxWidth: 150,
+  },
+  selectActive: { borderColor: C.acid },
+  selectPressed: { borderColor: C.faint },
+  selectText: {
+    color: C.dim,
+    fontFamily: MONO,
+    fontSize: 10,
+    lineHeight: 13,
+    letterSpacing: 0.8,
+    flexShrink: 1,
+  },
+  selectTextActive: { color: C.acid },
+  selectMark: { color: C.faint, fontFamily: MONO, fontSize: 10, marginLeft: 6 },
+
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.72)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: C.surface,
+    borderTopWidth: S.hairline,
+    borderTopColor: C.line,
+    borderTopLeftRadius: 14,
+    borderTopRightRadius: 14,
+    paddingTop: 16,
+    paddingBottom: 28,
+    maxHeight: '72%',
+  },
+  sheetTitle: {
+    color: C.faint,
+    fontFamily: MONO,
+    fontSize: 10,
+    letterSpacing: 1.6,
+    paddingHorizontal: S.gutter,
+    paddingBottom: 10,
+  },
+  sheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: S.gutter,
+    paddingVertical: 13,
+    borderTopWidth: S.hairline,
+    borderTopColor: C.lineSoft,
+  },
+  sheetRowPressed: { backgroundColor: C.surfaceHi },
+  sheetLabel: { color: C.text, fontFamily: MONO, fontSize: 12, letterSpacing: 0.5 },
+  sheetLabelActive: { color: C.acid },
+  sheetCount: { color: C.faint, fontFamily: MONO, fontSize: 11 },
 
   disclosure: {
     marginTop: 18,

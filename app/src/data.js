@@ -90,8 +90,24 @@ export function arrange(tickers, { sortKey, query, sector, direction = 'desc' })
   });
 }
 
-export function sectorsOf(tickers) {
-  return ['All', ...Array.from(new Set(tickers.map((t) => t.sector))).sort()];
+/**
+ * Sectors for the filter sheet, each with how many tickers it holds.
+ *
+ * The count is what makes a list worth opening: it says up front that Energy
+ * has three names and Technology thirty, which a row of equal-sized chips
+ * could never convey.
+ */
+export function sectorOptions(tickers) {
+  const counts = new Map();
+  for (const ticker of tickers) {
+    counts.set(ticker.sector, (counts.get(ticker.sector) || 0) + 1);
+  }
+  return [
+    { value: 'All', label: 'ALL SECTORS', count: tickers.length },
+    ...Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([name, count]) => ({ value: name, label: name.toUpperCase(), count })),
+  ];
 }
 
 /**
