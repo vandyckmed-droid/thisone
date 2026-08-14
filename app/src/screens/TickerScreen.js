@@ -117,7 +117,7 @@ export default function TickerScreen({ ticker, snapshot, starred, onBack, onTogg
           color={ticker.maxDrawdown1y === null ? C.text : C.down}
         />
         <Stat label="RETURN/RISK" value={fmtNum(ticker.riskAdjusted1y, 2)} />
-        <Stat label="MOMENTUM" value={fmtNum(ticker.momentumScore, 0)} color={C.acid} />
+        <Stat label="MOMENTUM SCORE" value={fmtNum(ticker.momentumScore, 0)} color={C.acid} />
       </View>
 
       <SectionTitle>RANK IN TOP {snapshot.universeSize}</SectionTitle>
@@ -136,9 +136,12 @@ export default function TickerScreen({ ticker, snapshot, starred, onBack, onTogg
       <Text style={styles.footnote}>
         Adjusted closes from {ticker.firstSession} to {ticker.asOf}. Volatility is annualised from
         daily log returns; return/risk is the 1Y return divided by 1Y volatility. Momentum averages
-        this ticker's percentile across the 1M, 3M, 6M and 1Y returns, scaled so 100 is the strongest
-        of the {snapshot.universeSize} — a read on consistency across timeframes rather than any one
-        of them. Blank figures mean the ticker has not traded long enough to fill that window.
+        this ticker's percentile across the 3, 6, 9 and 12 month returns, each measured to a month ago
+        rather than to today — very short-term moves tend to reverse rather than persist, so the most
+        recent month is skipped. It is scaled so 100 is the strongest of the {snapshot.universeSize}:
+        a read on consistency across timeframes rather than any one of them, and blank until a ticker
+        has the ~13 months of history all four windows need. Blank figures elsewhere mean the same
+        thing — not enough history to fill that window.
       </Text>
     </ScrollView>
   );
