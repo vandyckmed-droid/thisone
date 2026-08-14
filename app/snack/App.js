@@ -2,7 +2,7 @@
 // Source of truth is app/App.js and app/src/. Regenerate after any change.
 
 // app/App.js
-import React9, { useCallback, useEffect, useMemo as useMemo5, useRef, useState as useState7 } from "react";
+import React9, { useCallback, useEffect, useMemo as useMemo5, useRef, useState as useState8 } from "react";
 import {
   Pressable as Pressable6,
   SafeAreaView,
@@ -13,7 +13,7 @@ import {
 } from "react-native";
 
 // app/src/components/UI.js
-import React from "react";
+import React, { useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 // app/src/haptics.js
@@ -131,6 +131,24 @@ function Stat({ label, value, color, width = "33.33%" }) {
       <Text style={[styles.statValue, color && { color }]}>{value}</Text>
     </View>;
 }
+function Disclosure({ label, children }) {
+  const [open, setOpen] = useState(false);
+  return <View style={styles.disclosure}>
+      <Pressable
+    onPress={() => {
+      tick();
+      setOpen((wasOpen) => !wasOpen);
+    }}
+    accessibilityRole="button"
+    accessibilityState={{ expanded: open }}
+    style={({ pressed }) => [styles.disclosureRow, pressed && styles.disclosurePressed]}
+  >
+        <Text style={styles.disclosureLabel}>{label}</Text>
+        <Text style={styles.disclosureMark}>{open ? "\u2304" : "\u203A"}</Text>
+      </Pressable>
+      {open && <View style={styles.disclosureBody}>{children}</View>}
+    </View>;
+}
 function SectionTitle({ children, right }) {
   return <View style={styles.sectionRow}>
       <Text style={styles.section}>{children}</Text>
@@ -174,6 +192,21 @@ var styles = StyleSheet.create({
   // pill once letterSpacing is applied.
   chipText: { color: C.dim, fontFamily: MONO, fontSize: 10, lineHeight: 13, letterSpacing: 0.8 },
   chipTextActive: { color: C.bg },
+  disclosure: {
+    marginTop: 18,
+    borderTopWidth: S.hairline,
+    borderTopColor: C.line
+  },
+  disclosureRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14
+  },
+  disclosurePressed: { opacity: 0.6 },
+  disclosureLabel: { color: C.dim, fontFamily: MONO, fontSize: 10, letterSpacing: 1.4 },
+  disclosureMark: { color: C.acid, fontFamily: MONO, fontSize: 14 },
+  disclosureBody: { paddingBottom: 14 },
   stat: { paddingVertical: 9, paddingRight: 10 },
   statLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 0.8 },
   statValue: { color: C.text, fontFamily: MONO, fontSize: 14, marginTop: 3 },
@@ -358,7 +391,7 @@ function changeOver(points) {
 }
 
 // app/src/screens/RanksScreen.js
-import React4, { useMemo, useState as useState2 } from "react";
+import React4, { useMemo, useState as useState3 } from "react";
 import {
   FlatList,
   Pressable as Pressable3,
@@ -370,7 +403,7 @@ import {
 } from "react-native";
 
 // app/src/components/TickerRow.js
-import React3, { useState } from "react";
+import React3, { useState as useState2 } from "react";
 import { Image, Pressable as Pressable2, StyleSheet as StyleSheet2, Text as Text2, View as View2 } from "react-native";
 
 // app/src/components/Sparkline.js
@@ -426,7 +459,7 @@ var formatMetric = (format, value) => {
   }
 };
 function Logo({ uri, symbol, enabled: enabled2 }) {
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState2(false);
   if (!enabled2 || !uri || failed) {
     return <View2 style={[styles2.logo, styles2.logoFallback]}>
         <Text2 style={styles2.logoLetter}>{symbol.slice(0, 1)}</Text2>
@@ -531,10 +564,10 @@ function RanksScreen({
   onRefresh,
   refreshing
 }) {
-  const [sortKey, setSortKey] = useState2(settings.defaultSort);
-  const [direction, setDirection] = useState2("desc");
-  const [query, setQuery] = useState2("");
-  const [sector, setSector] = useState2("All");
+  const [sortKey, setSortKey] = useState3(settings.defaultSort);
+  const [direction, setDirection] = useState3("desc");
+  const [query, setQuery] = useState3("");
+  const [sector, setSector] = useState3("All");
   const sort = sortByKey(sortKey);
   const sectors = useMemo(() => sectorsOf(tickers), [tickers]);
   const rows = useMemo(
@@ -665,7 +698,7 @@ var styles3 = StyleSheet3.create({
 });
 
 // app/src/screens/SettingsScreen.js
-import React5, { useState as useState3 } from "react";
+import React5, { useState as useState4 } from "react";
 import {
   Alert,
   Pressable as Pressable4,
@@ -701,7 +734,7 @@ function SettingsScreen({
   onResetAll,
   onRefresh
 }) {
-  const [draftUrl, setDraftUrl] = useState3(settings.sourceUrl);
+  const [draftUrl, setDraftUrl] = useState4(settings.sourceUrl);
   const commitUrl = () => {
     const url = draftUrl.trim();
     if (!url) {
@@ -888,7 +921,7 @@ var styles4 = StyleSheet4.create({
 });
 
 // app/src/screens/TickerScreen.js
-import React7, { useMemo as useMemo3, useState as useState5 } from "react";
+import React7, { useMemo as useMemo3, useState as useState6 } from "react";
 import {
   Dimensions,
   Image as Image2,
@@ -900,14 +933,14 @@ import {
 } from "react-native";
 
 // app/src/components/PriceChart.js
-import React6, { useMemo as useMemo2, useState as useState4 } from "react";
+import React6, { useMemo as useMemo2, useState as useState5 } from "react";
 import { StyleSheet as StyleSheet5, Text as Text5, View as View5 } from "react-native";
 import Svg2, { Circle, Defs, Line, LinearGradient, Path, Stop } from "react-native-svg";
 var H = 190;
 var PAD_TOP = 14;
 var PAD_BOTTOM = 18;
 function PriceChart({ points, width }) {
-  const [cursor, setCursor] = useState4(null);
+  const [cursor, setCursor] = useState5(null);
   const geometry = useMemo2(() => {
     if (!points || points.length < 2) return null;
     let min = Infinity;
@@ -1023,7 +1056,7 @@ var RETURN_ROWS = [
   ["2y", "2 YEAR"]
 ];
 function TickerScreen({ ticker, snapshot, starred, onBack, onToggleStar }) {
-  const [range, setRange] = useState5("1Y");
+  const [range, setRange] = useState6("1Y");
   const width = Dimensions.get("window").width - S.gutter * 2;
   const sessions = (RANGES.find((r) => r.key === range) || RANGES[3]).sessions;
   const points = useMemo3(
@@ -1063,10 +1096,20 @@ function TickerScreen({ ticker, snapshot, starred, onBack, onToggleStar }) {
       </Text6>
 
       <View6 style={styles6.priceBlock}>
-        <Text6 style={styles6.price}>{fmtPrice(ticker.price)}</Text6>
-        <Text6 style={[styles6.change, { color: tone(ticker.changePct) }]}>
-          {ticker.change >= 0 ? "+" : ""}{fmtNum(ticker.change)} ({fmtPct(ticker.changePct)})
-        </Text6>
+        <View6>
+          <Text6 style={styles6.price}>{fmtPrice(ticker.price)}</Text6>
+          <Text6 style={[styles6.change, { color: tone(ticker.changePct) }]}>
+            {ticker.change >= 0 ? "+" : ""}{fmtNum(ticker.change)} ({fmtPct(ticker.changePct)})
+          </Text6>
+        </View6>
+        {
+    /* A size, not a ranking -- so it belongs with the company, not in a
+       section that is otherwise nothing but #n placings. */
+  }
+        <View6 style={styles6.capBlock}>
+          <Text6 style={styles6.capLabel}>MARKET CAP</Text6>
+          <Text6 style={styles6.capValue}>{fmtCap(ticker.marketCap)}</Text6>
+        </View6>
       </View6>
 
       <View6 style={styles6.rangeRow}>
@@ -1109,8 +1152,36 @@ function TickerScreen({ ticker, snapshot, starred, onBack, onToggleStar }) {
     color={ticker.maxDrawdown1y === null ? C.text : C.down}
   />
         <Stat label="RETURN/RISK" value={fmtNum(ticker.riskAdjusted1y, 2)} />
-        <Stat label="MOMENTUM SCORE" value={fmtNum(ticker.momentumScore, 0)} color={C.acid} />
       </View6>
+
+      <SectionTitle>MOMENTUM</SectionTitle>
+      <View6 style={styles6.grid}>
+        <Stat label="SCORE" value={fmtNum(ticker.momentumScore, 0)} color={C.acid} width="50%" />
+        <Stat
+    label={`RANK OF ${snapshot.universeSize}`}
+    value={fmtRank(ticker.ranks.momentum)}
+    width="50%"
+  />
+      </View6>
+
+      <Disclosure label="HOW MOMENTUM WORKS ›">
+        <Text6 style={styles6.prose}>
+          Four returns are measured for every company: 3, 6, 9 and 12 months. Each one stops a month
+          short of today rather than running up to the last close — very short-term moves tend to
+          reverse rather than persist, so the most recent month is skipped instead of counted.
+        </Text6>
+        <Text6 style={styles6.prose}>
+          This ticker is then ranked against the other {snapshot.universeSize - 1} on each of those
+          four windows, and the four placings are averaged and rescaled so 100 is the strongest of
+          the {snapshot.universeSize}. A high score means winning across every timeframe, not
+          spiking in one.
+        </Text6>
+        <Text6 style={styles6.prose}>
+          It stays blank until a company has traded about 13 months — the 12-month window plus the
+          skipped one. Scoring on whichever windows happened to exist would be a different measure
+          wearing the same name.
+        </Text6>
+      </Disclosure>
 
       <SectionTitle>RANK IN TOP {snapshot.universeSize}</SectionTitle>
       <View6 style={styles6.grid}>
@@ -1119,21 +1190,14 @@ function TickerScreen({ ticker, snapshot, starred, onBack, onToggleStar }) {
         <Stat label="3 MONTH" value={fmtRank(ticker.ranks.return_3m)} />
         <Stat label="6 MONTH" value={fmtRank(ticker.ranks.return_6m)} />
         <Stat label="1 YEAR" value={fmtRank(ticker.ranks.return_1y)} />
-        <Stat label="MOMENTUM" value={fmtRank(ticker.ranks.momentum)} />
         <Stat label="RETURN/RISK" value={fmtRank(ticker.ranks.riskAdjusted)} />
         <Stat label="LOW VOL" value={fmtRank(ticker.ranks.volatility)} />
-        <Stat label="MKT CAP USD" value={fmtCap(ticker.marketCap)} />
       </View6>
 
       <Text6 style={styles6.footnote}>
-        Adjusted closes from {ticker.firstSession} to {ticker.asOf}. Volatility is annualised from
-        daily log returns; return/risk is the 1Y return divided by 1Y volatility. Momentum averages
-        this ticker's percentile across the 3, 6, 9 and 12 month returns, each measured to a month ago
-        rather than to today — very short-term moves tend to reverse rather than persist, so the most
-        recent month is skipped. It is scaled so 100 is the strongest of the {snapshot.universeSize}:
-        a read on consistency across timeframes rather than any one of them, and blank until a ticker
-        has the ~13 months of history all four windows need. Blank figures elsewhere mean the same
-        thing — not enough history to fill that window.
+        Dividend-adjusted closes, {ticker.firstSession} to {ticker.asOf}. Volatility is annualised
+        from daily log returns; return/risk is the 1Y return over 1Y volatility. A blank figure means
+        too little history to fill that window.
       </Text6>
     </ScrollView3>;
 }
@@ -1156,7 +1220,17 @@ var styles6 = StyleSheet6.create({
   symbol: { color: C.text, fontFamily: MONO, fontSize: 24, letterSpacing: 2 },
   name: { color: C.dim, fontSize: 12, marginTop: 3 },
   meta: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 0.8, marginTop: 10 },
-  priceBlock: { marginTop: 18, marginBottom: 16 },
+  priceBlock: {
+    marginTop: 18,
+    marginBottom: 16,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "space-between"
+  },
+  capBlock: { alignItems: "flex-end", paddingBottom: 3 },
+  capLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 0.8 },
+  capValue: { color: C.text, fontFamily: MONO, fontSize: 16, marginTop: 3 },
+  prose: { color: C.dim, fontSize: 11, lineHeight: 18, marginBottom: 10 },
   price: { color: C.text, fontFamily: MONO, fontSize: 34 },
   change: { fontFamily: MONO, fontSize: 13, marginTop: 4 },
   rangeRow: { flexDirection: "row", marginBottom: 14 },
@@ -1183,7 +1257,7 @@ var styles6 = StyleSheet6.create({
 });
 
 // app/src/screens/WatchlistScreen.js
-import React8, { useMemo as useMemo4, useState as useState6 } from "react";
+import React8, { useMemo as useMemo4, useState as useState7 } from "react";
 import { FlatList as FlatList2, RefreshControl as RefreshControl2, StyleSheet as StyleSheet7, Text as Text7, View as View7 } from "react-native";
 function WatchlistScreen({
   tickers,
@@ -1194,7 +1268,7 @@ function WatchlistScreen({
   onRefresh,
   refreshing
 }) {
-  const [sortKey, setSortKey] = useState6("change");
+  const [sortKey, setSortKey] = useState7("change");
   const held = useMemo4(
     () => tickers.filter((t) => watchlist.includes(t.symbol)),
     [tickers, watchlist]
@@ -1278,16 +1352,16 @@ var TABS = [
 var SPARK_SESSIONS = 90;
 var SPARK_POINTS = 24;
 function App() {
-  const [ready, setReady] = useState7(false);
-  const [settings, setSettings] = useState7(DEFAULT_SETTINGS);
-  const [watchlist, setWatchlist] = useState7([]);
-  const [snapshot, setSnapshot] = useState7(null);
-  const [tab, setTab] = useState7("ranks");
-  const [openSymbol, setOpenSymbol] = useState7(null);
-  const [refreshing, setRefreshing] = useState7(false);
-  const [notice, setNotice] = useState7(null);
-  const [fatal, setFatal] = useState7(null);
-  const [lastFetched, setLastFetched] = useState7(null);
+  const [ready, setReady] = useState8(false);
+  const [settings, setSettings] = useState8(DEFAULT_SETTINGS);
+  const [watchlist, setWatchlist] = useState8([]);
+  const [snapshot, setSnapshot] = useState8(null);
+  const [tab, setTab] = useState8("ranks");
+  const [openSymbol, setOpenSymbol] = useState8(null);
+  const [refreshing, setRefreshing] = useState8(false);
+  const [notice, setNotice] = useState8(null);
+  const [fatal, setFatal] = useState8(null);
+  const [lastFetched, setLastFetched] = useState8(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   useEffect(() => {
