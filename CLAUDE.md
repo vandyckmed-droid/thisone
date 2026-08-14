@@ -100,6 +100,7 @@ secret has to exist for the pipeline to run.
 | Path | What it is |
 | --- | --- |
 | `scripts/build_snapshot.py` | The pipeline: universe, prices, metrics, validation, atomic write |
+| `scripts/remetric.py` | Replays changed formulas over the committed history, no refetch |
 | `scripts/fetch_logos.py` | Caches every company logo into `web/logos.json` |
 | `scripts/build_web.py` | Folds `data/` and the logos into one self-contained page |
 | `web/index.template.html` | **The app — edit here** |
@@ -110,7 +111,16 @@ secret has to exist for the pipeline to run.
 | `data/sectors/*.json` | The top 100 in each sector |
 | `app/src/` | The retired React Native original, kept for reference |
 
-Two invariants worth not breaking:
+Changing a *formula* rather than the data does not need an FMP key or a refetch:
+`remetric.py` imports the pipeline's own functions and replays them over the
+`history` already committed, keeping the data date. Edit the metric in
+`build_snapshot.py` — it stays the one definition — then run remetric.
+
+Three invariants worth not breaking:
+
+- Nothing in `data/` is ranked. Every score and placing the app shows is
+  measured against the rows on screen, so a filter re-ranks the field. Publish
+  the raw measure and let the app do the ranking.
 
 - The pipeline validates entirely in memory and writes by atomic rename, so a
   failed refresh leaves every published file byte-for-byte intact. Keep it that

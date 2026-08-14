@@ -19,6 +19,7 @@ account anywhere in the loop.
 | Path | What it is |
 | --- | --- |
 | `scripts/build_snapshot.py` | The whole pipeline: universe, prices, metrics, validation, write |
+| `scripts/remetric.py` | Replays changed formulas over the committed history, no refetch |
 | `scripts/fetch_logos.py` | Caches every company logo into `web/logos.json` |
 | `scripts/build_web.py` | Folds `data/` and the logos into one self-contained page |
 | `web/index.template.html` | The app itself — edit here |
@@ -81,10 +82,11 @@ swamping a single table. Publishing the sectors as their own files answers that
 directly: a sector file *is* the sector, so nothing needs spreading, and the
 overall table is free to be the plain market-cap ordering it claims to be.
 
-Each file **ranks its own members**. `LLY` is #41 of 300 on momentum in the
-overall table and #23 of 100 in healthcare — the same company measured against
-two different fields. The app says which field a placing came from everywhere it
-shows one, because a bare `#23` would otherwise mean nothing.
+Nothing here is ranked. Every placing and every score the app shows is measured
+against the rows the reader has on screen at that moment — the Top 300, one
+sector, or the Top 300 filtered down to healthcare, which is a different field
+again. A rank frozen at build time could only ever answer the unfiltered
+question, so the files publish the raw measures and the app does the ranking.
 
 Two sectors come up short of `SECTOR_N`: after the screen and the CIK dedupe,
 Communication Services has 83 eligible names and Utilities 72. They are
@@ -104,17 +106,34 @@ silent rate-limit once dropped `VZ`, `SCHW`, `BLK`, `BA`, `DIS`, `NEE` and `UNP`
 from the table without failing the build.
 
 **Computes metrics.** Returns over 1W/1M/3M/6M/YTD/1Y/2Y, annualised
-volatility over 30d/90d/1Y, 1-year max drawdown, a return-per-unit-of-risk
-ratio, and a momentum score blending the 3/6/9/12-month returns, with a rank for
-each — computed separately inside every table.
+volatility over 30d/90d/1Y, 1-year max drawdown, and momentum.
 
-Every window long enough to afford it stops short of today by a share of its own
-length — 20 sessions per 250, so 5 off a quarter and 40 off two years. It is all
-or nothing: skipping inside momentum but not in the returns table would put two
-numbers labelled "6 month" on one screen measuring different things. Windows
-below a quarter skip nothing, and `MOMENTUM_SKIP_RATIO=0` turns it off
-everywhere. Rank 1 is always the desirable end, including for volatility, where
-it means the *lowest*.
+Every return window runs to the last close. A "3 month return" is the plain move
+over three months, so it can be checked against any other source, and the
+skipping that momentum needs lives inside momentum rather than being spread
+across the whole table.
+
+**Momentum (`mom`)** is risk-adjusted rather than a blend of raw returns. Two
+windows are measured — the last 250 sessions stopping 20 short of today, and the
+last 125 stopping 10 short. Over each, the return is annualised and divided by
+the annualised volatility of that same stretch, and the two ratios averaged:
+
+```
+mom = mean( annualised return(250,20) / annualised vol(250,20),
+            annualised return(125,10) / annualised vol(125,10) )
+```
+
+Each window stops short of today because very short-term moves tend to reverse
+rather than persist, so a window running to the last close measures noise
+sitting on the trend. Two windows rather than one because a company strong over
+both the year and the half year is trending, where one that wins on a single
+window is usually carrying a spike. Dividing by volatility is what separates it
+from a return column: a stock up 60% on a wild ride and one up 30% grinding
+steadily can land at the same ratio.
+
+The published value is an absolute ratio — typically −1.5 to 4, and a genuine
+30-bagger annualises into the 20s. What the app shows beside a row is that
+ratio's standing among the rows on screen, which only the app can know.
 
 A window only produces a number when it is genuinely filled. A company that
 listed six weeks ago reports a 30-day volatility and a null 1-year one, rather
@@ -156,7 +175,6 @@ previous snapshot left untouched                     exit 1, files unchanged
 | `MIN_MARKET_CAP` | `250000000` | Screen floor |
 | `MIN_DOLLAR_VOLUME` | `3000000` | Average daily traded value floor |
 | `CANDIDATE_POOL` | `4000` | How many names the screener is asked for |
-| `MOMENTUM_SKIP_RATIO` | `0.08` | Share of **every** return window left off its recent end; `0` disables |
 | `HISTORY_DAYS` | `850` | Calendar days requested; must cover the longest window plus its skip |
 | `MAX_WORKERS` | `4` | Concurrent API requests |
 | `DATA_DIR` | `data/` | Where to write |
@@ -206,9 +224,9 @@ array of closes rather than repeating 584 date strings.
   "scope": "all",
   "universeSize": 300,
   "sessions": 584,
-  "skip":     { "ratio": 0.08, "returns": { "1y": 20, "...": 0 },
-                "momentum": { "3m": 5, "6m": 10, "9m": 15, "12m": 20 } },
-  "momentum": { "windows": { "3m": 63, "6m": 126, "9m": 189, "12m": 252 } },
+  "mom": { "windows": [ { "sessions": 250, "skip": 20 },
+                        { "sessions": 125, "skip": 10 } ],
+           "measure": "annualised return / annualised volatility, averaged" },
   "dates": ["2024-04-16", "..."],          // shared calendar
   "tickers": [
     {
@@ -225,12 +243,10 @@ array of closes rather than repeating 584 date strings.
       "asOf": "2026-08-13",
       "returns":         { "1w": 2.88, "1m": 6.02, "3m": 5.49, "6m": 1.96,
                            "ytd": 5.76, "1y": 21.66, "2y": 71.83 },
-      "momentumReturns": { "3m": 5.49, "6m": 1.96, "9m": 14.44, "12m": 21.66 },
+      "momWindows":      { "250-20": 0.425, "125-10": 0.258 },
       "volatility":      { "30d": 39.02, "90d": 39.61, "1y": 36.65 },
       "maxDrawdown1y": -20.22,
-      "riskAdjusted1y": 0.591,
-      "momentumScore": 46.4,
-      "ranks": { "marketCap": 1, "return_1y": 154, "volatility": 202, "...": 0 },
+      "mom": 0.341,
       "history": [118.42, null, "..."],    // aligned to `dates`
       "firstSession": "2024-04-16"
     }
