@@ -1,0 +1,8 @@
+# Written during a refresh and atomically renamed over snapshot.json; it only
+# exists if a run was interrupted mid-write.
+data/*.tmp
+
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/

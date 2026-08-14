@@ -1,0 +1,10 @@
+{
+  "name": "top-100-ranks",
+  "version": "1.0.0",
+  "description": "Dark, minimal Top-100 market cap ranks for Expo Snack / Expo Go",
+  "main": "App.js",
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "*",
+    "react-native-svg": "*"
+  }
+}
