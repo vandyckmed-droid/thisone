@@ -18,6 +18,7 @@ is no server, no database and no account anywhere in the loop.
 | Path | What it is |
 | --- | --- |
 | `scripts/build_snapshot.py` | The whole pipeline: universe, prices, metrics, validation, write |
+| `scripts/make_snack_url.py` | Prints a one-click Expo Snack link for `app/` |
 | `data/snapshot.json` | The published snapshot — the only file the app reads |
 | `.github/workflows/refresh-snapshot.yml` | Post-close refresh |
 | `app/` | React Native app for Expo Snack / Expo Go |
@@ -175,7 +176,13 @@ New repository secret*, named `FMP_API_KEY`.
 
 ## 4. The app
 
-See [`app/README.md`](app/README.md) for the two-minute Expo Snack setup.
+```bash
+python3 scripts/make_snack_url.py --branch main --check
+```
+
+That prints a Snack URL that loads every app file straight from GitHub — open
+it, scan the QR code with Expo Go, done. See [`app/README.md`](app/README.md)
+for the details and for pasting it in by hand.
 
 Four screens — **Ranks**, **Watchlist**, **Ticker detail**, **Settings** —
 in a dark, minimal, industrial theme with a single acid-green accent. The

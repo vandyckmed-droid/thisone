@@ -5,34 +5,51 @@ on an iPhone. No build step, no App Store, no accounts.
 
 ## Running it
 
-1. Open [snack.expo.dev](https://snack.expo.dev).
-2. Recreate this file tree in the Snack file panel and paste each file in:
+Generate a one-click Snack link:
 
-   ```
-   App.js
-   package.json
-   src/theme.js
-   src/storage.js
-   src/data.js
-   src/components/Sparkline.js
-   src/components/PriceChart.js
-   src/components/TickerRow.js
-   src/components/UI.js
-   src/screens/RanksScreen.js
-   src/screens/WatchlistScreen.js
-   src/screens/TickerScreen.js
-   src/screens/SettingsScreen.js
-   ```
+```bash
+python3 scripts/make_snack_url.py --branch main --check
+```
 
-   Snack reads dependencies from `package.json`, so
-   `react-native-svg` and `@react-native-async-storage/async-storage` resolve
-   on their own. Both ship with Expo Go — nothing needs installing on the phone.
+Open the printed URL, install **Expo Go** from the App Store, and scan the QR
+code with the iPhone camera. There is nothing to copy and paste.
 
-3. Install **Expo Go** from the App Store, then scan the QR code in the Snack
-   toolbar with the iPhone camera.
+Snack's `files` query parameter accepts externally hosted code, so the URL
+lists each file's `raw.githubusercontent.com` address rather than inlining the
+source. You get the real modular project in the Snack editor — not a flattened
+bundle — and a push to the branch shows up on the next load. The two
+dependencies are passed as their own query parameter, so Snack resolves
+versions matching whichever SDK it is running; both ship with Expo Go, so
+nothing installs on the phone.
 
-Snack can also import this folder directly from GitHub — use *Import from
-GitHub* and point it at the `app/` directory — which saves the copy-paste.
+`--check` verifies every referenced file resolves before printing the link,
+which is worth running after a rename.
+
+While the app lives on an unmerged branch, point it at both that branch's code
+*and* its snapshot:
+
+```bash
+python3 scripts/make_snack_url.py \
+  --branch claude/financial-modeling-top-100-9g4jp3 \
+  --data-branch claude/financial-modeling-top-100-9g4jp3 --check
+```
+
+`--data-branch` inlines a one-line override of `src/source.js`. Without it the
+app reads from `main`, which has no `snapshot.json` until the branch merges,
+and opens on the error screen. Once merged, drop the flag.
+
+### Pasting it in by hand
+
+If you would rather not use a generated link, create a blank Snack and
+recreate this tree, adding `react-native-svg` and
+`@react-native-async-storage/async-storage` in the dependencies pane:
+
+```
+App.js
+src/source.js   src/theme.js   src/storage.js   src/data.js
+src/components/{Sparkline,PriceChart,TickerRow,UI}.js
+src/screens/{Ranks,Watchlist,Ticker,Settings}Screen.js
+```
 
 ## Pointing it at your data
 
