@@ -121,6 +121,9 @@ Three invariants worth not breaking:
 - Nothing in `data/` is ranked. Every score and placing the app shows is
   measured against the rows on screen, so a filter re-ranks the field. Publish
   the raw measure and let the app do the ranking.
+- The table publishes two momentum scores and they are meant to disagree: MOM
+  sums eleven separately-scored blocks, BLEND averages two long windows measured
+  whole. Do not quietly reconcile them.
 - MOM is a sum of eleven daily-Sharpe terms over rolling 21-session blocks, and
   both halves of each term are daily quantities on purpose. The blocks are
   counted in trading days from the as-of date, never snapped to calendar months

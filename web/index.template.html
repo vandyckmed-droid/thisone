@@ -153,9 +153,10 @@
   .sym { display: block; color: var(--text); font-family: var(--mono); font-size: 13px; letter-spacing: 0.5px; }
   .nm { display: block; color: var(--faint); font-size: 11px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .spark { width: 54px; height: 22px; margin-right: 10px; flex-shrink: 0; }
-  .nums { min-width: 78px; text-align: right; flex-shrink: 0; }
-  .price { display: block; color: var(--text); font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
-  .metric { display: block; font-family: var(--mono); font-size: 12px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  /* One number to the row now that price has gone, so it carries the weight
+     price used to. */
+  .nums { min-width: 66px; text-align: right; flex-shrink: 0; }
+  .metric { display: block; color: var(--text); font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; }
   /* A watchlist row carries a second line, so it stacks rather than sitting
      on one baseline. */
   .row-tall { flex-direction: column; align-items: stretch; }
@@ -354,7 +355,7 @@
     <div class="chip-row" id="sort-chips" role="tablist" aria-label="Sort by metric"></div>
     <button class="columns" id="dir-btn" aria-label="Reverse sort direction">
       <span>#&nbsp;&nbsp;TICKER</span>
-      <span>PRICE / <span class="col-metric" id="col-metric"></span><span class="col-dir" id="col-dir"></span></span>
+      <span><span class="col-metric" id="col-metric"></span><span class="col-dir" id="col-dir"></span></span>
     </button>
     <div class="summary" id="summary" hidden>
       <span class="summary-text" id="summary-text"></span>
@@ -378,7 +379,7 @@
     <div class="chip-row" id="watch-chips" aria-label="Sort watchlist by metric"></div>
     <div class="columns" id="watch-columns" hidden>
       <span>#&nbsp;&nbsp;IN THIS LIST</span>
-      <span>PRICE / <span class="col-metric" id="watch-col-metric"></span></span>
+      <span><span class="col-metric" id="watch-col-metric"></span></span>
     </div>
     <div class="list" id="watch-list"></div>
   </div>
@@ -439,13 +440,14 @@ function logoHtml(symbol, cls) {
    so a fix in one belongs in the other. */
 /* Three ways to order the table, and only three. Every other measure a company
    carries lives on its own screen, where there is room to say what it means.
-   MOM shows the score itself — eleven daily-Sharpe terms summed, which reads
-   on its own once you know the field runs about -2 to +3. Its standing among
-   the rows on screen is still there, as the row number down the left and as
-   SCORE on the ticker screen. */
+   MOM and BLEND both show the score itself rather than a standing: they read
+   on their own once you know the field runs about -2.5 to +3. Where a row
+   places is still there, as the row number down the left and as SCORE on the
+   ticker screen. */
 const SORTS = [
-  { key: 'mom', label: 'MOM', short: 'MOM', better: 'high', value: (t) => t.mom, format: 'ratio' },
-  { key: 'marketCap', label: 'MKT CAP', short: 'CAP', better: 'high', value: (t) => t.marketCap, format: 'cap' },
+  { key: 'mom', label: 'MOM', short: 'MOM', better: 'high', value: (t) => t.mom, format: 'ratio', tone: true },
+  { key: 'blend', label: 'BLEND', short: 'BLEND', better: 'high', value: (t) => t.blend, format: 'ratio', tone: true },
+  { key: 'marketCap', label: 'MKT CAP', short: 'CAP', better: 'high', value: (t) => t.marketCap, format: 'cap', tone: true },
   { key: 'vol', label: 'VOLATILITY', short: 'VOL', better: 'low', value: (t) => t.volatility['1y'], format: 'pct0' },
 ];
 const sortByKey = (key) => SORTS.find((s) => s.key === key) || SORTS[0];
@@ -490,6 +492,7 @@ function ranksIn(rows, symbol) {
     count: rows.length,
     marketCap: place((t) => t.marketCap, true),
     mom: place((t) => t.mom, true),
+    blend: place((t) => t.blend, true),
     volatility: place((t) => t.volatility['1y'], false),
     '1m': byReturn('1m'), '3m': byReturn('3m'), '6m': byReturn('6m'),
     ytd: byReturn('ytd'), '1y': byReturn('1y'),
@@ -796,9 +799,9 @@ function rowHtml(t, position, sort, starred, band) {
   const metricValue = metricIsCap ? t.changePct : sort.value(t);
   const shown = formatMetric(metricIsCap ? 'pct' : sort.format, metricValue);
   // Volatility is a magnitude and carries no sign worth colouring; the day's
-  // move and MOM both do.
-  const colored = metricIsCap || sort.key === 'mom' ? toneClass(metricValue) : '';
-  const label = `${esc(t.symbol)}, ${esc(t.name)}. ${fmtPrice(t.price)}, ${fmtPct(t.changePct)} today.` +
+  // move and both scores do.
+  const colored = sort.tone ? toneClass(metricValue) : '';
+  const label = `${esc(t.symbol)}, ${esc(t.name)}. ${sort.label} ${shown}.` +
     (band ? ` ${fmtPct(band.offHigh, 1)} from its 52 week high of ${fmtPrice(band.high.close)}.` : '');
   return `<button class="row${starred ? ' starred' : ''}${band ? ' row-tall' : ''}" ` +
     `data-sym="${esc(t.symbol)}" aria-label="${label}">` +
@@ -807,8 +810,7 @@ function rowHtml(t, position, sort, starred, band) {
     logoHtml(t.symbol, 'tile') +
     `<span class="identity"><span class="sym">${esc(t.symbol)}</span><span class="nm">${esc(t.name)}</span></span>` +
     sparkSvg(t.spark, t.sparkChange) +
-    `<span class="nums"><span class="price">${fmtPrice(t.price)}</span>` +
-    `<span class="metric ${colored}">${shown}</span></span>` +
+    `<span class="nums"><span class="metric ${colored}">${shown}</span></span>` +
     `<span class="star${starred ? ' on' : ''}" data-star="${esc(t.symbol)}" role="button" tabindex="0" ` +
     `aria-label="${starred ? 'Remove from' : 'Add to'} watchlist">${starred ? '★' : '☆'}</span>` +
     (band ? `</span>${rangeHtml(band)}` : '') +
@@ -949,6 +951,7 @@ function renderTicker() {
       : `THIS VIEW ${rank.count}`;
   const monthly = t.momBlocks || [];
   const momBlocks = ((table.mom || {}).blocks) || [];
+  const blendWindows = ((table.blend || {}).windows) || [];
   const peak = monthly.reduce((m, s) => Math.max(m, Math.abs(s)), 0);
   const band = range52(t, table.dates);
   const nose = noseMove(t, table.dates);
@@ -1080,9 +1083,33 @@ function renderTicker() {
       a smaller number rather than a worse one, which is not a ranking.</p>
     </details>
 
+    <div class="section-title">BLEND</div>
+    <div class="grid">
+      ${stat('BLEND', fmtNum(t.blend, 2), toneClass(t.blend), '', missingReason('mom'))}
+      ${blendWindows.map((w, i) => stat(
+        `${w.sessions}-${w.skip}`, fmtNum((t.blendWindows || [])[i], 2),
+        toneClass((t.blendWindows || [])[i]), '', missingReason('mom'))).join('')}
+    </div>
+    <p class="note">The same question asked over two long windows instead of eleven short ones —
+    twelve months minus one, and six minus one — each measured whole and the pair averaged.</p>
+    <details><summary>HOW BLEND DIFFERS FROM MOM ›</summary>
+      <p class="prose">Each window takes every daily log return inside it, divides the average by the
+      daily volatility of that same stretch, and multiplies by √252. The two results are averaged.</p>
+      <p class="prose">MOM scores eleven short blocks separately and adds them, so a company has to keep
+      earning across the year. BLEND measures each long window in one piece, so a single decisive run can
+      carry it and a flat spell in the middle costs nothing as long as the whole stretch ends well. Sorting
+      by one and then the other is a quick way to see which kind of year a company had.</p>
+      <p class="prose">The √252 is the whole of what annualising both halves of the ratio would do — the
+      return scales by 252 and the volatility by its root. It is a constant, so it reorders nothing; it is
+      here because the numbers read more naturally with it than without.</p>
+      <p class="prose">Both windows or nothing, and both stop short of today like MOM does, though by
+      their own margins: 20 sessions for the longer, 10 for the shorter.</p>
+    </details>
+
     <div class="section-title">RANK IN ${esc(scope)}</div>
     <div class="grid">
       ${stat('MOM', fmtRank(rank.mom), 'up')}
+      ${stat('BLEND', fmtRank(rank.blend))}
       ${stat('MARKET CAP', fmtRank(rank.marketCap))}
       ${stat('LOW VOL', fmtRank(rank.volatility))}
       ${RANK_ROWS.map(([key, label]) => stat(label, fmtRank(rank[key]))).join('')}
