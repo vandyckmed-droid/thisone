@@ -13,7 +13,7 @@ scripts/bundle_snack.sh                 # writes app/snack/App.js
 
 ```
 https://snack.expo.dev/?sourceUrl=<raw url to app/snack/App.js>
-  &dependencies=react-native-svg,@react-native-async-storage/async-storage
+  &dependencies=react-native-svg,@react-native-async-storage/async-storage,expo-haptics
   &platform=mydevice&theme=dark
 ```
 
@@ -59,12 +59,14 @@ and opens on the error screen. Once merged, drop the flag.
 ### Pasting it in by hand
 
 If you would rather not use a generated link, create a blank Snack and
-recreate this tree, adding `react-native-svg` and
-`@react-native-async-storage/async-storage` in the dependencies pane:
+recreate this tree, adding `react-native-svg`,
+`@react-native-async-storage/async-storage` and `expo-haptics` in the
+dependencies pane:
 
 ```
 App.js
 src/source.js   src/theme.js   src/storage.js   src/data.js
+src/haptics.js
 src/components/{Sparkline,PriceChart,TickerRow,UI}.js
 src/screens/{Ranks,Watchlist,Ticker,Settings}Screen.js
 ```
@@ -84,11 +86,15 @@ serving yesterday's file for several minutes after a refresh lands.
 
 ## Screens
 
-**RANKS** — the full universe. Eleven sort columns along the top (market cap,
-1D through 1Y, YTD, momentum, return/risk, volatility); tap the active one
-again to invert it. Below that, sector filters and a symbol/name search. Each
+**RANKS** — the full universe. Ten sort columns along the top (market cap,
+1D through 1Y, momentum, return/risk, volatility); tap the active one again to
+invert it. Above them, a symbol/name search sharing its row with a single
+sector filter, which opens a sheet listing each sector and how many tickers it
+holds. Each
 row carries a rank, logo, 90-session sparkline, price and the metric being
-sorted on. Tap to open a ticker, press and hold to star it.
+sorted on, and a trailing button that adds it to the watchlist — `+` when it is not
+tracked, `✓` when it is. Tracked rows carry an acid left edge and a faint tint.
+Tap anywhere else on the row to open the ticker.
 
 The sparkline is coloured by its own 90-session direction, not by the day, so
 a stock can show a red trend line beside a green daily move — the line is
@@ -101,12 +107,14 @@ Sorting is always best-first, which for the volatility column means the
 average of the day's moves. It is a watchlist, not a portfolio: no positions,
 no sizes, no cost basis.
 
-**Ticker detail** — price and day change, a scrubable chart over
-1M/3M/6M/1Y/2Y/MAX (drag across it to read any session), then returns, risk and
-this ticker's rank in each metric. Figures the ticker has not traded long
+**Ticker detail** — price and market cap, a scrubable chart over
+1M/3M/6M/9M/1Y/2Y/MAX (drag across it to read any session), then returns, risk,
+momentum and this ticker's rank in each metric. Momentum carries a
+`HOW MOMENTUM WORKS ›` row that explains the construction on demand rather than
+parking a paragraph under every ticker. Figures the ticker has not traded long
 enough to support are blank rather than misleading.
 
-**CONFIG** — snapshot URL, default sort, logo and sparkline toggles,
+**CONFIG** — snapshot URL, default sort, logo, sparkline and haptics toggles,
 refresh-on-open, what the current snapshot contains, and buttons to clear the
 watchlist or reset everything.
 

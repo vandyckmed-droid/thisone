@@ -49,21 +49,18 @@ function TickerRow({ ticker, position, sort, settings, starred, onPress, onToggl
         tap();
         onPress(ticker);
       }}
-      onLongPress={() => {
-        (starred ? undo : confirm)();
-        onToggleStar(ticker.symbol);
-      }}
-      style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+      style={({ pressed }) => [
+        styles.row,
+        starred && styles.rowStarred,
+        pressed && styles.rowPressed,
+      ]}
     >
       <Text style={styles.position}>{position}</Text>
 
       <Logo uri={ticker.logo} symbol={ticker.symbol} enabled={settings.showLogos} />
 
       <View style={styles.identity}>
-        <View style={styles.symbolLine}>
-          <Text style={styles.symbol} numberOfLines={1}>{ticker.symbol}</Text>
-          {starred && <Text style={styles.star}>★</Text>}
-        </View>
+        <Text style={styles.symbol} numberOfLines={1}>{ticker.symbol}</Text>
         <Text style={styles.name} numberOfLines={1}>{ticker.name}</Text>
       </View>
 
@@ -82,6 +79,29 @@ function TickerRow({ ticker, position, sort, settings, starred, onPress, onToggl
           {formatMetric(metricIsCap ? 'pct' : sort.format, metricValue)}
         </Text>
       </View>
+
+      {/* Nested inside the row's Pressable, but it claims its own touches, so
+          tapping the button never opens the ticker. */}
+      <Pressable
+        onPress={() => {
+          (starred ? undo : confirm)();
+          onToggleStar(ticker.symbol);
+        }}
+        hitSlop={10}
+        accessibilityRole="button"
+        accessibilityLabel={
+          starred ? `Remove ${ticker.symbol} from watchlist` : `Add ${ticker.symbol} to watchlist`
+        }
+        style={({ pressed }) => [
+          styles.watch,
+          starred && styles.watchOn,
+          pressed && styles.watchPressed,
+        ]}
+      >
+        <Text style={[styles.watchGlyph, starred && styles.watchGlyphOn]}>
+          {starred ? '✓' : '+'}
+        </Text>
+      </Pressable>
     </Pressable>
   );
 }
@@ -91,11 +111,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
-    paddingHorizontal: S.gutter,
+    paddingRight: S.gutter,
+    paddingLeft: S.gutter - 2,
     borderBottomWidth: S.hairline,
     borderBottomColor: C.lineSoft,
+    // The edge is always present and usually invisible, so marking a row
+    // tints it rather than nudging every column two pixels sideways.
+    borderLeftWidth: 2,
+    borderLeftColor: 'transparent',
+  },
+  rowStarred: {
+    borderLeftColor: C.acid,
+    backgroundColor: 'rgba(200,255,0,0.05)',
   },
   rowPressed: { backgroundColor: C.surface },
+
   position: {
     width: 24,
     color: C.faint,
@@ -112,14 +142,28 @@ const styles = StyleSheet.create({
   logoFallback: { alignItems: 'center', justifyContent: 'center' },
   logoLetter: { color: C.dim, fontFamily: MONO, fontSize: 12 },
   identity: { flex: 1, paddingRight: 8 },
-  symbolLine: { flexDirection: 'row', alignItems: 'center' },
   symbol: { color: C.text, fontFamily: MONO, fontSize: 13, letterSpacing: 0.5 },
-  star: { color: C.acid, fontSize: 10, marginLeft: 5 },
   name: { color: C.faint, fontSize: 10, marginTop: 2 },
   spark: { width: 56, marginRight: 10 },
   numbers: { alignItems: 'flex-end', minWidth: 74 },
   price: { color: C.text, fontFamily: MONO, fontSize: 13 },
   metric: { fontFamily: MONO, fontSize: 11, marginTop: 2 },
+
+  watch: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    marginLeft: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: S.hairline,
+    borderColor: C.line,
+    backgroundColor: C.surface,
+  },
+  watchOn: { borderColor: C.acid, backgroundColor: 'transparent' },
+  watchPressed: { borderColor: C.faint },
+  watchGlyph: { color: C.dim, fontSize: 15, lineHeight: 18, marginTop: -1 },
+  watchGlyphOn: { color: C.acid, fontSize: 13 },
 });
 
 export default React.memo(TickerRow);
