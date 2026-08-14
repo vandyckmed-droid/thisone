@@ -99,8 +99,8 @@ secret has to exist for the pipeline to run.
 
 | Path | What it is |
 | --- | --- |
-| `scripts/build_snapshot.py` | The pipeline: universe, prices, metrics, validation, atomic write |
-| `scripts/remetric.py` | Replays changed formulas over the committed history, no refetch |
+| `scripts/build_snapshot.py` | The pipeline: universe, prices, benchmarks, metrics, validation, atomic write |
+| `scripts/remetric.py` | Replays changed formulas over the committed history; `--fetch-benchmarks` refreshes the factor series |
 | `scripts/fetch_logos.py` | Caches every company logo into `web/logos.json` |
 | `scripts/build_web.py` | Folds `data/` and the logos into one self-contained page |
 | `web/index.template.html` | **The app — edit here** |
@@ -114,25 +114,35 @@ secret has to exist for the pipeline to run.
 Changing a *formula* rather than the data does not need an FMP key or a refetch:
 `remetric.py` imports the pipeline's own functions and replays them over the
 `history` already committed, keeping the data date. Edit the metric in
-`build_snapshot.py` — it stays the one definition — then run remetric.
+`build_snapshot.py` — it stays the one definition — then run remetric. The one
+exception is the score, which has no pipeline-side formula at all: it lives in
+`web/index.template.html`, so changing it is a template edit and a rebuild, no
+data run of any kind.
 
-Three invariants worth not breaking:
+Invariants worth not breaking:
 
-- Nothing in `data/` is ranked. Every score and placing the app shows is
-  measured against the rows on screen, so a filter re-ranks the field. Publish
-  the raw measure and let the app do the ranking.
-- The table publishes two momentum scores and they are meant to disagree: MOM
-  sums eleven separately-scored blocks, BLEND averages two long windows measured
-  whole. Do not quietly reconcile them.
-- MOM is a sum of eleven daily-Sharpe terms over rolling 21-session blocks, and
-  both halves of each term are daily quantities on purpose. The blocks are
-  counted in trading days from the as-of date, never snapped to calendar months
-  — that keeps the skip a fixed month rather than letting it breathe between one
-  and two depending on the day of the run. Do not annualise it: annualising both
-  halves only multiplies by √252 and changes no ordering, and doing it to the
-  numerator alone — compounding a simple return over a log-return volatility —
-  mixes two scales and inflates exactly the most extreme names. That bug shipped
-  once and put a 30-bagger nine times clear of the field.
+- Nothing in `data/` is ranked — and no momentum score is published either.
+  The score is a function of the reader's formula settings (lookback window,
+  skip, volatility adjustment, market/sector residuals, 50/50 blend), so the
+  app computes it at view time from each ticker's `history` and the table's
+  `benchmarks`, then ranks against the rows on screen. Publish raw series
+  only; a precomputed score in `data/` would be a second, contradictory
+  answer, and is exactly what this system replaced.
+- `benchmarks` is what the pipeline owes that scoring: VTI plus one SPDR
+  sector fund per sector present, aligned to the same shared calendar as every
+  ticker, in every table file. Betas are estimated over the 504 sessions
+  ending at a window's cutoff, so the calendar must stay comfortably past 504
+  sessions plus the deepest skip (21). Benchmarks are funds, not companies —
+  they must never appear as table rows.
+- The default formula is the 50/50 blend of 12M (252 sessions, skip 21) and
+  6M (126, skip 10), vol-adjusted, market-residual, sector residual off. The
+  skip per window is round(lookback/12), written out as {63: 5, 126: 10,
+  189: 16, 252: 21} because 126's is defined as 10 where `Math.round` says 11.
+  Windows are counted in trading days from the as-of date, never snapped to
+  calendar months, and the score is never annualised: a constant √252 reorders
+  nothing, and annualising one half of a ratio inflates exactly the most
+  extreme names. That bug shipped once and put a 30-bagger nine times clear of
+  the field.
 
 - The pipeline validates entirely in memory and writes by atomic rename, so a
   failed refresh leaves every published file byte-for-byte intact. Keep it that
