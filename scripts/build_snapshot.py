@@ -23,7 +23,7 @@ Environment
 -----------
 FMP_API_KEY / API_KEY   required
 TOP_N                   size of the market-cap core (default 100)
-BALANCED_N              extra names chosen to spread sectors (default 100)
+BALANCED_N              extra names chosen to spread sectors (default 200)
 SELECTION               "collar" (default) or "lookahead"
 SECTOR_CAP_PCT          most of the universe any one sector may hold (default 20)
 SECTOR_FLOOR_PCT        least any sector present may hold (default 4)
@@ -60,7 +60,7 @@ API_KEY = os.environ.get("FMP_API_KEY") or os.environ.get("API_KEY") or ""
 # sectors are already largest -- another twenty technology names before a second
 # utility -- so the expansion is chosen to spread across sectors instead.
 CORE_N = int(os.environ.get("TOP_N", "100"))
-BALANCED_N = int(os.environ.get("BALANCED_N", "100"))
+BALANCED_N = int(os.environ.get("BALANCED_N", "200"))
 TARGET_N = CORE_N + BALANCED_N
 
 # Balance is expressed as a share of the finished universe, not a count, so the

@@ -8,9 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       top_n:
-        description: "Universe size"
+        description: "Market-cap core size"
         required: false
         default: "100"
+      balanced_n:
+        description: "Names added under the sector collar"
+        required: false
+        default: "200"
 
 # Never let two refreshes race for the same commit.
 concurrency:
@@ -43,6 +47,7 @@ jobs:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           API_KEY: ${{ secrets.API_KEY }}
           TOP_N: ${{ github.event.inputs.top_n || '100' }}
+          BALANCED_N: ${{ github.event.inputs.balanced_n || '200' }}
         run: python scripts/build_snapshot.py
 
       - name: Commit refreshed snapshot
