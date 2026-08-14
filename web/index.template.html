@@ -156,6 +156,30 @@
   .nums { min-width: 78px; text-align: right; flex-shrink: 0; }
   .price { display: block; color: var(--text); font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
   .metric { display: block; font-family: var(--mono); font-size: 12px; margin-top: 3px; font-variant-numeric: tabular-nums; }
+  /* A watchlist row carries a second line, so it stacks rather than sitting
+     on one baseline. */
+  .row-tall { flex-direction: column; align-items: stretch; }
+  .row-main { display: flex; align-items: center; }
+  .range { display: flex; align-items: center; gap: 9px; margin: 10px 0 1px 30px; }
+  .range-cap { color: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: 1px; }
+  .range-end { color: var(--faint); font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .range-track { position: relative; flex: 1; height: 3px; min-width: 40px; background: var(--line); border-radius: 2px; }
+  /* End caps, so the track reads as a scale between two prices rather than a
+     progress bar that happens to have stopped. */
+  .range-track::before, .range-track::after {
+    content: ''; position: absolute; top: -3px; width: 1px; height: 9px; background: var(--line);
+  }
+  .range-track::before { left: 0; }
+  .range-track::after { right: 0; }
+  .range-dot {
+    position: absolute; top: 50%; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--acid); transform: translate(-50%, -50%);
+  }
+  .range-off {
+    color: var(--dim); font-family: var(--mono); font-size: 11px;
+    min-width: 54px; text-align: right; font-variant-numeric: tabular-nums;
+  }
+
   .star { padding: 8px 2px 8px 12px; color: var(--faint); font-size: 19px; line-height: 23px; flex-shrink: 0; }
   .star.on { color: var(--acid); }
   .up { color: var(--acid); } .dn { color: var(--down); } .flat { color: var(--faint); }
@@ -255,6 +279,15 @@
   }
   .axis { display: flex; justify-content: space-between; margin-top: 6px; }
   .axis span { color: var(--faint); font-family: var(--mono); font-size: 11px; }
+  .chart-note { color: var(--faint); font-size: 11px; line-height: 16px; margin-top: 8px; }
+
+  .range-big { margin-top: 14px; }
+  .range-heads { display: flex; justify-content: space-between; align-items: baseline; }
+  .range-price { color: var(--text); font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; }
+  .range-when { color: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: 0.6px; }
+  .range-track.big { height: 4px; margin: 12px 0 9px; }
+  .range-track.big::before, .range-track.big::after { top: -4px; height: 12px; }
+  .range-track.big .range-dot { width: 10px; height: 10px; }
 
   .section-title { color: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: 2px; margin: 26px 0 0; }
   .grid { display: flex; flex-wrap: wrap; border-top: 1px solid var(--line); margin-top: 8px; padding-top: 4px; }
@@ -593,6 +626,83 @@ const views = { ranks: [], watchlist: [] };
 
 const SPARK_SESSIONS = 90;
 const SPARK_POINTS = 24;
+const YEAR_SESSIONS = 252;
+
+/* The sessions MOM cannot see. Taken from the widest skip the data declares
+   rather than written down here, so if the formula's windows move the charts
+   follow them. */
+const FIRST_TABLE = DATA.tables[DATA.index.universes[0].key];
+const NOSE = Math.max(
+  ...(((FIRST_TABLE.mom || {}).windows) || [{ skip: 20 }]).map((w) => w.skip)
+);
+
+/**
+ * Where the last close sits in its 52-week range, and how it got there.
+ *
+ * MOM stops measuring 20 sessions back, so a name can be near the top of the
+ * table and well off its high — the pullback happened inside the blind spot.
+ * This is the number that shows it. High and low are closing prices, since
+ * closes are all this app carries; a broker quoting intraday extremes will
+ * show a slightly wider band.
+ */
+function range52(ticker, dates) {
+  const points = seriesFor(ticker, dates, YEAR_SESSIONS);
+  if (points.length < 2) return null;
+  let low = points[0];
+  let high = points[0];
+  for (const p of points) {
+    if (p.close < low.close) low = p;
+    if (p.close > high.close) high = p;
+  }
+  const last = points[points.length - 1].close;
+  const band = high.close - low.close;
+  return {
+    low, high, last,
+    // 0 sits on the low, 1 on the high. A flat year has no position to report,
+    // so it reads as sitting on its high rather than dividing by nothing.
+    position: band > 0 ? (last - low.close) / band : 1,
+    offHigh: high.close ? (last / high.close - 1) * 100 : 0,
+    aboveLow: low.close ? (last / low.close - 1) * 100 : 0,
+    sessions: points.length,
+  };
+}
+
+/** The move MOM skipped: the last NOSE sessions, start to finish. */
+function noseMove(ticker, dates) {
+  const points = seriesFor(ticker, dates, Infinity);
+  if (points.length <= NOSE) return null;
+  const from = points[points.length - 1 - NOSE].close;
+  const to = points[points.length - 1].close;
+  return from ? (to / from - 1) * 100 : null;
+}
+
+/**
+ * Sparkline geometry, in two strokes rather than one.
+ *
+ * The stretch MOM measures is drawn in the direction colour and the last NOSE
+ * sessions in grey, so the nose reads as separate from the window the score
+ * came from. Each half is sampled on its own account so the join lands on the
+ * real cutoff, and every point carries its place in the whole series rather
+ * than its index within its own half — otherwise the short grey tail would be
+ * stretched to the same width as the long coloured head.
+ */
+function sparkGeometry(points) {
+  const n = points.length;
+  if (n < 2) return null;
+  const cut = Math.max(0, n - 1 - NOSE);
+  const sample = (from, to, count) => {
+    const span = to - from;
+    if (span < 1) return null;
+    const k = Math.max(2, Math.min(count, span + 1));
+    const out = [];
+    for (let i = 0; i < k; i += 1) {
+      const idx = from + Math.round((span * i) / (k - 1));
+      out.push({ x: idx / (n - 1), close: points[idx].close });
+    }
+    return out;
+  };
+  return { head: sample(0, cut, 18), tail: sample(cut, n - 1, 7) };
+}
 
 /* Sparkline geometry per universe, computed once and kept. */
 const decorated = {};
@@ -601,7 +711,7 @@ function tickersOf(key) {
     const table = DATA.tables[key];
     decorated[key] = table.tickers.map((t) => {
       const points = seriesFor(t, table.dates, SPARK_SESSIONS);
-      return { ...t, spark: downsample(points, SPARK_POINTS), sparkChange: changeOver(points) };
+      return { ...t, spark: sparkGeometry(points), sparkChange: changeOver(points) };
     });
   }
   return decorated[key];
@@ -610,24 +720,47 @@ function tickersOf(key) {
 const $ = (id) => document.getElementById(id);
 
 /* ============================================================== sparkline */
-function sparkSvg(points, change) {
-  if (!points || points.length < 2) return '<svg class="spark" aria-hidden="true"></svg>';
+function sparkSvg(spark, change) {
+  const segments = spark ? [spark.head, spark.tail].filter(Boolean) : [];
+  if (!segments.length) return '<svg class="spark" aria-hidden="true"></svg>';
+
   let min = Infinity; let max = -Infinity;
-  for (const p of points) { if (p.close < min) min = p.close; if (p.close > max) max = p.close; }
+  for (const seg of segments) {
+    for (const p of seg) { if (p.close < min) min = p.close; if (p.close > max) max = p.close; }
+  }
   const span = max - min || 1;
   const W = 54; const H = 22; const pad = 2;
   const usable = H - pad * 2;
-  const step = W / (points.length - 1);
-  const coords = points.map((p, i) =>
-    `${(i * step).toFixed(1)},${(pad + usable - ((p.close - min) / span) * usable).toFixed(1)}`).join(' ');
+  const trace = (seg) => seg.map((p) =>
+    `${(p.x * W).toFixed(1)},${(pad + usable - ((p.close - min) / span) * usable).toFixed(1)}`).join(' ');
+  const stroke = (seg, color) =>
+    `<polyline points="${trace(seg)}" fill="none" stroke="${color}" stroke-width="1.4" ` +
+    `stroke-linejoin="round" stroke-linecap="round"/>`;
+
   const color = (change ?? 0) >= 0 ? 'var(--acid)' : 'var(--down)';
   return `<svg class="spark" viewBox="0 0 ${W} ${H}" aria-hidden="true">` +
-    `<polyline points="${coords}" fill="none" stroke="${color}" stroke-width="1.4" ` +
-    `stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+    (spark.head ? stroke(spark.head, color) : '') +
+    (spark.tail ? stroke(spark.tail, 'var(--faint)') : '') +
+    `</svg>`;
 }
 
 /* ==================================================================== rows */
-function rowHtml(t, position, sort, starred, score) {
+/** The 52-week track: low at the left, high at the right, today's close on it. */
+function rangeHtml(band) {
+  if (!band) return '';
+  const at = Math.max(0, Math.min(100, band.position * 100));
+  // A listing younger than a year has no 52 weeks to report, so it says so
+  // rather than passing four months off as the year.
+  return `<span class="range">` +
+    `<span class="range-cap">${band.sessions >= YEAR_SESSIONS ? '52W' : 'MAX'}</span>` +
+    `<span class="range-end">${fmtPrice(band.low.close)}</span>` +
+    `<span class="range-track"><span class="range-dot" style="left:${at.toFixed(1)}%"></span></span>` +
+    `<span class="range-end">${fmtPrice(band.high.close)}</span>` +
+    `<span class="range-off">${band.offHigh <= -0.05 ? fmtPct(band.offHigh, 1) : 'AT HIGH'}</span>` +
+    `</span>`;
+}
+
+function rowHtml(t, position, sort, starred, score, band) {
   // Sorting by market cap makes the row number the rank, so the metric column
   // would just repeat it; show the day's move there instead.
   const metricIsCap = sort.format === 'cap';
@@ -637,8 +770,11 @@ function rowHtml(t, position, sort, starred, score) {
     : sort.value(t);
   const shown = formatMetric(metricIsCap ? 'pct' : sort.format, metricValue);
   const colored = metricIsCap ? toneClass(metricValue) : '';
-  return `<button class="row${starred ? ' starred' : ''}" data-sym="${esc(t.symbol)}" ` +
-    `aria-label="${esc(t.symbol)}, ${esc(t.name)}. ${fmtPrice(t.price)}, ${fmtPct(t.changePct)} today.">` +
+  const label = `${esc(t.symbol)}, ${esc(t.name)}. ${fmtPrice(t.price)}, ${fmtPct(t.changePct)} today.` +
+    (band ? ` ${fmtPct(band.offHigh, 1)} from its 52 week high of ${fmtPrice(band.high.close)}.` : '');
+  return `<button class="row${starred ? ' starred' : ''}${band ? ' row-tall' : ''}" ` +
+    `data-sym="${esc(t.symbol)}" aria-label="${label}">` +
+    (band ? '<span class="row-main">' : '') +
     `<span class="pos">${position === null || position === undefined ? '—' : position}</span>` +
     logoHtml(t.symbol, 'tile') +
     `<span class="identity"><span class="sym">${esc(t.symbol)}</span><span class="nm">${esc(t.name)}</span></span>` +
@@ -647,6 +783,7 @@ function rowHtml(t, position, sort, starred, score) {
     `<span class="metric ${colored}">${shown}</span></span>` +
     `<span class="star${starred ? ' on' : ''}" data-star="${esc(t.symbol)}" role="button" tabindex="0" ` +
     `aria-label="${starred ? 'Remove from' : 'Add to'} watchlist">${starred ? '★' : '☆'}</span>` +
+    (band ? `</span>${rangeHtml(band)}` : '') +
     `</button>`;
 }
 
@@ -746,8 +883,12 @@ function renderWatch() {
   const scores = momScores(rows);
   $('watch-list').innerHTML = rows.length
     ? rows.map((t, i) => {
-        const html = rowHtml(t, i + 1, sort, true, scores.get(t.symbol));
-        return html.replace('data-sym="', `data-table="${esc(tableKeyOf.get(t.symbol))}" data-sym="`);
+        // MOM stops 20 sessions back, so the watchlist carries the piece it
+        // cannot see: where this close sits in the year's range.
+        const key = tableKeyOf.get(t.symbol);
+        const band = range52(t, DATA.tables[key].dates);
+        const html = rowHtml(t, i + 1, sort, true, scores.get(t.symbol), band);
+        return html.replace('data-sym="', `data-table="${esc(key)}" data-sym="`);
       }).join('')
     : '<div class="empty"><div class="empty-title">NOTHING TRACKED YET</div>' +
       '<div class="empty-hint">Tap the star beside any row on the Ranks screen, or open a ticker ' +
@@ -781,6 +922,8 @@ function renderTicker() {
       ? universeLabel(table)
       : `THIS VIEW ${rank.count}`;
   const windows = t.momWindows || {};
+  const band = range52(t, table.dates);
+  const nose = noseMove(t, table.dates);
 
   const sessions = (RANGES.find((r) => r.key === state.range) || RANGES[4]).sessions;
   const points = seriesFor(t, table.dates, sessions);
@@ -814,6 +957,32 @@ function renderTicker() {
     <div class="readout" id="chart-readout"></div>
     <div class="chart-box" id="chart-box"></div>
     <div class="axis" id="chart-axis"></div>
+    <div class="chart-note" id="chart-note"></div>
+
+    ${band ? `<div class="section-title">${band.sessions >= YEAR_SESSIONS ? '52 WEEK RANGE' : 'RANGE SINCE LISTING'}</div>
+    <div class="range-big">
+      <div class="range-heads">
+        <span class="range-price">${fmtPrice(band.low.close)}</span>
+        <span class="range-price">${fmtPrice(band.high.close)}</span>
+      </div>
+      <div class="range-track big">
+        <span class="range-dot" style="left:${Math.max(0, Math.min(100, band.position * 100)).toFixed(1)}%"></span>
+      </div>
+      <div class="range-heads">
+        <span class="range-when">LOW · ${esc(band.low.date)}</span>
+        <span class="range-when">HIGH · ${esc(band.high.date)}</span>
+      </div>
+    </div>
+    <div class="grid">
+      ${stat('OFF HIGH', band.offHigh <= -0.05 ? fmtPct(band.offHigh, 1) : '—')}
+      ${stat('ABOVE LOW', fmtPct(band.aboveLow, 1))}
+      ${stat(`LAST ${NOSE}D`, fmtPct(nose, 1), toneClass(nose), '', missingReason('mom'))}
+    </div>
+    <p class="note">MOM stops measuring ${NOSE} sessions back, so the last column is exactly what it
+    could not see — the grey nose on the chart above. A name can rank near the top and still be well
+    off its high, which is the pullback this section is for. High and low are closing prices over the
+    last ${band.sessions} sessions, so a broker quoting intraday extremes will show a slightly wider
+    band.</p>` : ''}
 
     <div class="section-title">RETURNS</div>
     <div class="grid">${RETURN_ROWS.map(([key, label]) =>
@@ -911,10 +1080,19 @@ function mountChart(points) {
   const xy = points.map((p, i) => ({
     x: i * step, y: PAD_TOP + usable - ((p.close - min) / span) * usable,
   }));
-  const line = xy.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(2)} ${c.y.toFixed(2)}`).join(' ');
+  const path = (arr) => arr.map((c, i) => `${i === 0 ? 'M' : 'L'}${c.x.toFixed(2)} ${c.y.toFixed(2)}`).join(' ');
+  const line = path(xy);
   const area = `${line} L${W} ${H - PAD_BOTTOM} L0 ${H - PAD_BOTTOM} Z`;
   const rising = points[points.length - 1].close >= points[0].close;
   const stroke = rising ? 'var(--acid)' : 'var(--down)';
+
+  // The tail MOM leaves out, greyed so it reads apart from the stretch the
+  // score came from. Skipped on the shortest ranges, where the nose would be
+  // most of the chart and the whole line would go grey.
+  const showNose = points.length >= 3 * NOSE;
+  const cut = showNose ? points.length - 1 - NOSE : points.length - 1;
+  const head = path(xy.slice(0, cut + 1));
+  const tail = showNose ? path(xy.slice(cut)) : null;
 
   const idle = () => {
     readout.innerHTML =
@@ -924,6 +1102,11 @@ function mountChart(points) {
   };
   idle();
   axis.innerHTML = `<span>${esc(points[0].date)}</span><span>${esc(points[points.length - 1].date)}</span>`;
+  const note = $('chart-note');
+  if (note) {
+    note.textContent = showNose
+      ? `Grey: the last ${NOSE} sessions, which MOM leaves out.` : '';
+  }
 
   box.innerHTML =
     `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" ` +
@@ -934,7 +1117,14 @@ function mountChart(points) {
     `</linearGradient></defs>` +
     `<line x1="0" y1="${H - PAD_BOTTOM}" x2="${W}" y2="${H - PAD_BOTTOM}" stroke="var(--line)"/>` +
     `<path d="${area}" fill="url(#fade)"/>` +
-    `<path d="${line}" fill="none" stroke="${stroke}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>` +
+    (tail
+      ? `<line x1="${xy[cut].x.toFixed(2)}" y1="${PAD_TOP - 8}" x2="${xy[cut].x.toFixed(2)}" ` +
+        `y2="${H - PAD_BOTTOM}" stroke="var(--line)" stroke-dasharray="2 3"/>`
+      : '') +
+    `<path d="${head}" fill="none" stroke="${stroke}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>` +
+    (tail
+      ? `<path d="${tail}" fill="none" stroke="var(--faint)" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>`
+      : '') +
     `<g id="cursor" style="display:none">` +
     `<line id="cursor-line" x1="0" y1="${PAD_TOP - 8}" x2="0" y2="${H - PAD_BOTTOM}" stroke="var(--dim)"/>` +
     `<circle id="cursor-dot" r="4.5" fill="${stroke}"/></g></svg>` +
