@@ -43,7 +43,7 @@ SAVE_ENDPOINT = "https://exp.host/--/api/v2/snack/save"
 SNACK_PAGE = "https://snack.expo.dev/{id}"
 BUNDLE = "app/snack/App.js"
 
-DEPENDENCIES = ["react-native-svg", "@react-native-async-storage/async-storage"]
+DEPENDENCIES = ["react-native-svg", "@react-native-async-storage/async-storage", "expo-haptics"]
 NAME = "Top 100"
 DESCRIPTION = "Top 100 US stocks by market cap, ranked daily"
 

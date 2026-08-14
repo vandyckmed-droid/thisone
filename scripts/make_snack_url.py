@@ -29,6 +29,7 @@ APP_DIR = "app"
 FILES = [
     "App.js",
     "src/source.js",
+    "src/haptics.js",
     "src/theme.js",
     "src/storage.js",
     "src/data.js",
@@ -42,7 +43,7 @@ FILES = [
     "src/screens/SettingsScreen.js",
 ]
 
-DEPENDENCIES = ["react-native-svg", "@react-native-async-storage/async-storage"]
+DEPENDENCIES = ["react-native-svg", "@react-native-async-storage/async-storage", "expo-haptics"]
 
 
 def raw_url(branch: str, path: str) -> str:

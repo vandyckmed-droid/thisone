@@ -1,5 +1,6 @@
 import React from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { tick } from '../haptics';
 import { C, MONO, S } from '../theme';
 
 /**
@@ -28,7 +29,10 @@ export function ChipRow({ children }) {
 export function Chip({ label, active, onPress, compact }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        tick();
+        onPress();
+      }}
       style={({ pressed }) => [
         styles.chip,
         compact && styles.chipCompact,

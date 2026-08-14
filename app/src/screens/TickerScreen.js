@@ -11,6 +11,7 @@ import {
 import PriceChart from '../components/PriceChart';
 import { Chip, SectionTitle, Stat } from '../components/UI';
 import { RANGES, changeOver, seriesFor } from '../data';
+import { confirm, undo } from '../haptics';
 import { C, MONO, S, fmtCap, fmtNum, fmtPct, fmtPrice, fmtRank, tone } from '../theme';
 
 const RETURN_ROWS = [
@@ -18,7 +19,6 @@ const RETURN_ROWS = [
   ['1m', '1 MONTH'],
   ['3m', '3 MONTH'],
   ['6m', '6 MONTH'],
-  ['ytd', 'YTD'],
   ['1y', '1 YEAR'],
   ['2y', '2 YEAR'],
 ];
@@ -40,7 +40,13 @@ export default function TickerScreen({ ticker, snapshot, starred, onBack, onTogg
         <Pressable onPress={onBack} hitSlop={12}>
           <Text style={styles.back}>‹ BACK</Text>
         </Pressable>
-        <Pressable onPress={() => onToggleStar(ticker.symbol)} hitSlop={12}>
+        <Pressable
+          onPress={() => {
+            (starred ? undo : confirm)();
+            onToggleStar(ticker.symbol);
+          }}
+          hitSlop={12}
+        >
           <Text style={[styles.watch, starred && styles.watching]}>
             {starred ? '★ WATCHING' : '☆ WATCH'}
           </Text>
@@ -119,18 +125,20 @@ export default function TickerScreen({ ticker, snapshot, starred, onBack, onTogg
         <Stat label="MARKET CAP" value={fmtRank(ticker.ranks.marketCap)} color={C.acid} />
         <Stat label="1 MONTH" value={fmtRank(ticker.ranks.return_1m)} />
         <Stat label="3 MONTH" value={fmtRank(ticker.ranks.return_3m)} />
+        <Stat label="6 MONTH" value={fmtRank(ticker.ranks.return_6m)} />
         <Stat label="1 YEAR" value={fmtRank(ticker.ranks.return_1y)} />
         <Stat label="MOMENTUM" value={fmtRank(ticker.ranks.momentum)} />
         <Stat label="RETURN/RISK" value={fmtRank(ticker.ranks.riskAdjusted)} />
         <Stat label="LOW VOL" value={fmtRank(ticker.ranks.volatility)} />
-        <Stat label="YTD" value={fmtRank(ticker.ranks.return_ytd)} />
         <Stat label="MKT CAP USD" value={fmtCap(ticker.marketCap)} />
       </View>
 
       <Text style={styles.footnote}>
         Adjusted closes from {ticker.firstSession} to {ticker.asOf}. Volatility is annualised from
-        daily log returns; return/risk is the 1Y return divided by 1Y volatility. Blank figures mean
-        the ticker has not traded long enough to fill that window.
+        daily log returns; return/risk is the 1Y return divided by 1Y volatility. Momentum averages
+        this ticker's percentile across the 1M, 3M, 6M and 1Y returns, scaled so 100 is the strongest
+        of the {snapshot.universeSize} — a read on consistency across timeframes rather than any one
+        of them. Blank figures mean the ticker has not traded long enough to fill that window.
       </Text>
     </ScrollView>
   );

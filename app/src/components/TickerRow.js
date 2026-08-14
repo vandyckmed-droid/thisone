@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import Sparkline from './Sparkline';
+import { confirm, tap, undo } from '../haptics';
 import { C, MONO, S, fmtCap, fmtNum, fmtPct, fmtPrice, tone } from '../theme';
 
 const formatMetric = (format, value) => {
@@ -44,8 +45,14 @@ function TickerRow({ ticker, position, sort, settings, starred, onPress, onToggl
 
   return (
     <Pressable
-      onPress={() => onPress(ticker)}
-      onLongPress={() => onToggleStar(ticker.symbol)}
+      onPress={() => {
+        tap();
+        onPress(ticker);
+      }}
+      onLongPress={() => {
+        (starred ? undo : confirm)();
+        onToggleStar(ticker.symbol);
+      }}
       style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
     >
       <Text style={styles.position}>{position}</Text>

@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Defs, Line, LinearGradient, Path, Stop } from 'react-native-svg';
+import { tick } from '../haptics';
 import { C, MONO, fmtPrice } from '../theme';
 
 const H = 190;
@@ -54,7 +55,12 @@ export default function PriceChart({ points, width }) {
   const onScrub = (evt) => {
     const x = evt.nativeEvent.locationX;
     const index = Math.max(0, Math.min(points.length - 1, Math.round(x / geometry.step)));
-    setCursor(index);
+    // Only on a change of session, or a slow drag across a dense chart would
+    // fire a continuous buzz rather than discrete detents.
+    setCursor((previous) => {
+      if (previous !== index) tick();
+      return index;
+    });
   };
 
   const active = cursor === null ? null : points[cursor];

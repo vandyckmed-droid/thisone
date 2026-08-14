@@ -16,6 +16,26 @@ import {
 import React from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
+// app/src/haptics.js
+import * as Haptics from "expo-haptics";
+var enabled = true;
+var setHapticsEnabled = (value) => {
+  enabled = !!value;
+};
+var fire = (fn) => {
+  if (!enabled) return;
+  try {
+    const result = fn();
+    if (result && typeof result.catch === "function") result.catch(() => {
+    });
+  } catch (err) {
+  }
+};
+var tick = () => fire(() => Haptics.selectionAsync());
+var tap = () => fire(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
+var confirm = () => fire(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
+var undo = () => fire(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
+
 // app/src/theme.js
 import { Platform } from "react-native";
 var C = {
@@ -91,7 +111,10 @@ function ChipRow({ children }) {
 }
 function Chip({ label, active, onPress, compact }) {
   return <Pressable
-    onPress={onPress}
+    onPress={() => {
+      tick();
+      onPress();
+    }}
     style={({ pressed }) => [
       styles.chip,
       compact && styles.chipCompact,
@@ -199,7 +222,8 @@ var DEFAULT_SETTINGS = {
   defaultSort: "marketCap",
   showLogos: true,
   showSparklines: true,
-  refreshOnOpen: true
+  refreshOnOpen: true,
+  haptics: true
 };
 var read = async (key, fallback) => {
   try {
@@ -243,7 +267,6 @@ var SORTS = [
   { key: "r1m", label: "1 MONTH", short: "1M", rank: "return_1m", better: "high", value: (t) => t.returns["1m"], format: "pct" },
   { key: "r3m", label: "3 MONTH", short: "3M", rank: "return_3m", better: "high", value: (t) => t.returns["3m"], format: "pct" },
   { key: "r6m", label: "6 MONTH", short: "6M", rank: "return_6m", better: "high", value: (t) => t.returns["6m"], format: "pct" },
-  { key: "ytd", label: "YTD", short: "YTD", rank: "return_ytd", better: "high", value: (t) => t.returns.ytd, format: "pct" },
   { key: "r1y", label: "1 YEAR", short: "1Y", rank: "return_1y", better: "high", value: (t) => t.returns["1y"], format: "pct" },
   { key: "momentum", label: "MOMENTUM", short: "MOM", rank: "momentum", better: "high", value: (t) => t.momentumScore, format: "score" },
   { key: "risk", label: "RISK-ADJ", short: "R/R", rank: "riskAdjusted", better: "high", value: (t) => t.riskAdjusted1y, format: "ratio" },
@@ -254,6 +277,7 @@ var RANGES = [
   { key: "1M", sessions: 21 },
   { key: "3M", sessions: 63 },
   { key: "6M", sessions: 126 },
+  { key: "9M", sessions: 189 },
   { key: "1Y", sessions: 252 },
   { key: "2Y", sessions: 504 },
   { key: "MAX", sessions: Infinity }
@@ -401,9 +425,9 @@ var formatMetric = (format, value) => {
       return fmtNum(value);
   }
 };
-function Logo({ uri, symbol, enabled }) {
+function Logo({ uri, symbol, enabled: enabled2 }) {
   const [failed, setFailed] = useState(false);
-  if (!enabled || !uri || failed) {
+  if (!enabled2 || !uri || failed) {
     return <View2 style={[styles2.logo, styles2.logoFallback]}>
         <Text2 style={styles2.logoLetter}>{symbol.slice(0, 1)}</Text2>
       </View2>;
@@ -420,8 +444,14 @@ function TickerRow({ ticker, position, sort, settings, starred, onPress, onToggl
   const metricValue = metricIsCap ? ticker.changePct : sort.value(ticker);
   const metricColour = metricIsCap || sort.format === "pct" ? tone(metricValue) : C.text;
   return <Pressable2
-    onPress={() => onPress(ticker)}
-    onLongPress={() => onToggleStar(ticker.symbol)}
+    onPress={() => {
+      tap();
+      onPress(ticker);
+    }}
+    onLongPress={() => {
+      (starred ? undo : confirm)();
+      onToggleStar(ticker.symbol);
+    }}
     style={({ pressed }) => [styles2.row, pressed && styles2.rowPressed]}
   >
       <Text2 style={styles2.position}>{position}</Text2>
@@ -688,7 +718,7 @@ function SettingsScreen({
       onRefresh();
     }
   };
-  const confirm = (title, message, action) => Alert.alert(title, message, [
+  const confirm2 = (title, message, action) => Alert.alert(title, message, [
     { text: "Cancel", style: "cancel" },
     { text: "Confirm", style: "destructive", onPress: action }
   ]);
@@ -750,6 +780,12 @@ function SettingsScreen({
     onChange={(v) => onChange({ showSparklines: v })}
   />
       <Toggle
+    label="Haptics"
+    hint="Taps, chip selections and a tick per session while scrubbing a chart"
+    value={settings.haptics}
+    onChange={(v) => onChange({ haptics: v })}
+  />
+      <Toggle
     label="Refresh on open"
     hint="Otherwise the cached snapshot is used until you pull to refresh"
     value={settings.refreshOnOpen}
@@ -772,7 +808,7 @@ function SettingsScreen({
       <View4 style={styles4.inlineActions}>
         <Pressable4
     style={styles4.danger}
-    onPress={() => confirm("Clear watchlist", `Remove all ${watchlistCount} tracked tickers?`, onClearWatchlist)}
+    onPress={() => confirm2("Clear watchlist", `Remove all ${watchlistCount} tracked tickers?`, onClearWatchlist)}
   >
           <Text4 style={styles4.dangerText}>CLEAR WATCHLIST ({watchlistCount})</Text4>
         </Pressable4>
@@ -780,7 +816,7 @@ function SettingsScreen({
       <View4 style={styles4.inlineActions}>
         <Pressable4
     style={styles4.danger}
-    onPress={() => confirm("Reset everything", "Clear the watchlist, settings and cached snapshot?", onResetAll)}
+    onPress={() => confirm2("Reset everything", "Clear the watchlist, settings and cached snapshot?", onResetAll)}
   >
           <Text4 style={styles4.dangerText}>RESET ALL DATA</Text4>
         </Pressable4>
@@ -901,7 +937,10 @@ function PriceChart({ points, width }) {
   const onScrub = (evt) => {
     const x = evt.nativeEvent.locationX;
     const index = Math.max(0, Math.min(points.length - 1, Math.round(x / geometry.step)));
-    setCursor(index);
+    setCursor((previous) => {
+      if (previous !== index) tick();
+      return index;
+    });
   };
   const active = cursor === null ? null : points[cursor];
   return <View5>
@@ -980,7 +1019,6 @@ var RETURN_ROWS = [
   ["1m", "1 MONTH"],
   ["3m", "3 MONTH"],
   ["6m", "6 MONTH"],
-  ["ytd", "YTD"],
   ["1y", "1 YEAR"],
   ["2y", "2 YEAR"]
 ];
@@ -998,7 +1036,13 @@ function TickerScreen({ ticker, snapshot, starred, onBack, onToggleStar }) {
         <Pressable5 onPress={onBack} hitSlop={12}>
           <Text6 style={styles6.back}>‹ BACK</Text6>
         </Pressable5>
-        <Pressable5 onPress={() => onToggleStar(ticker.symbol)} hitSlop={12}>
+        <Pressable5
+    onPress={() => {
+      (starred ? undo : confirm)();
+      onToggleStar(ticker.symbol);
+    }}
+    hitSlop={12}
+  >
           <Text6 style={[styles6.watch, starred && styles6.watching]}>
             {starred ? "\u2605 WATCHING" : "\u2606 WATCH"}
           </Text6>
@@ -1073,18 +1117,20 @@ function TickerScreen({ ticker, snapshot, starred, onBack, onToggleStar }) {
         <Stat label="MARKET CAP" value={fmtRank(ticker.ranks.marketCap)} color={C.acid} />
         <Stat label="1 MONTH" value={fmtRank(ticker.ranks.return_1m)} />
         <Stat label="3 MONTH" value={fmtRank(ticker.ranks.return_3m)} />
+        <Stat label="6 MONTH" value={fmtRank(ticker.ranks.return_6m)} />
         <Stat label="1 YEAR" value={fmtRank(ticker.ranks.return_1y)} />
         <Stat label="MOMENTUM" value={fmtRank(ticker.ranks.momentum)} />
         <Stat label="RETURN/RISK" value={fmtRank(ticker.ranks.riskAdjusted)} />
         <Stat label="LOW VOL" value={fmtRank(ticker.ranks.volatility)} />
-        <Stat label="YTD" value={fmtRank(ticker.ranks.return_ytd)} />
         <Stat label="MKT CAP USD" value={fmtCap(ticker.marketCap)} />
       </View6>
 
       <Text6 style={styles6.footnote}>
         Adjusted closes from {ticker.firstSession} to {ticker.asOf}. Volatility is annualised from
-        daily log returns; return/risk is the 1Y return divided by 1Y volatility. Blank figures mean
-        the ticker has not traded long enough to fill that window.
+        daily log returns; return/risk is the 1Y return divided by 1Y volatility. Momentum averages
+        this ticker's percentile across the 1M, 3M, 6M and 1Y returns, scaled so 100 is the strongest
+        of the {snapshot.universeSize} — a read on consistency across timeframes rather than any one
+        of them. Blank figures mean the ticker has not traded long enough to fill that window.
       </Text6>
     </ScrollView3>;
 }
@@ -1241,6 +1287,9 @@ function App() {
   const [lastFetched, setLastFetched] = useState7(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  useEffect(() => {
+    setHapticsEnabled(settings.haptics);
+  }, [settings.haptics]);
   const refresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -1388,7 +1437,14 @@ function App() {
       <View8 style={styles8.tabBar}>
         {TABS.map((t) => {
     const active = t.key === tab;
-    return <Pressable6 key={t.key} style={styles8.tab} onPress={() => setTab(t.key)}>
+    return <Pressable6
+      key={t.key}
+      style={styles8.tab}
+      onPress={() => {
+        if (t.key !== tab) tick();
+        setTab(t.key);
+      }}
+    >
               <View8 style={[styles8.tabMark, active && styles8.tabMarkActive]} />
               <Text8 style={[styles8.tabLabel, active && styles8.tabLabelActive]}>
                 {t.label}

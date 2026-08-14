@@ -18,6 +18,7 @@ export const DEFAULT_SETTINGS = {
   showLogos: true,
   showSparklines: true,
   refreshOnOpen: true,
+  haptics: true,
 };
 
 const read = async (key, fallback) => {
