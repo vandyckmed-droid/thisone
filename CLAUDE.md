@@ -121,8 +121,11 @@ Three invariants worth not breaking:
 - Nothing in `data/` is ranked. Every score and placing the app shows is
   measured against the rows on screen, so a filter re-ranks the field. Publish
   the raw measure and let the app do the ranking.
-- MOM is a sum of eleven monthly daily-Sharpe terms, and both halves of each
-  term are daily quantities on purpose. Do not annualise it: annualising both
+- MOM is a sum of eleven daily-Sharpe terms over rolling 21-session blocks, and
+  both halves of each term are daily quantities on purpose. The blocks are
+  counted in trading days from the as-of date, never snapped to calendar months
+  — that keeps the skip a fixed month rather than letting it breathe between one
+  and two depending on the day of the run. Do not annualise it: annualising both
   halves only multiplies by √252 and changes no ordering, and doing it to the
   numerator alone — compounding a simple return over a log-return volatility —
   mixes two scales and inflates exactly the most extreme names. That bug shipped

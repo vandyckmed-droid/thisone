@@ -948,8 +948,8 @@ function renderTicker() {
     : rows.length === table.tickers.length
       ? universeLabel(table)
       : `THIS VIEW ${rank.count}`;
-  const monthly = t.momMonths || [];
-  const momMonths = ((table.mom || {}).months) || [];
+  const monthly = t.momBlocks || [];
+  const momBlocks = ((table.mom || {}).blocks) || [];
   const peak = monthly.reduce((m, s) => Math.max(m, Math.abs(s)), 0);
   const band = range52(t, table.dates);
   const nose = noseMove(t, table.dates);
@@ -1040,41 +1040,45 @@ function renderTicker() {
     <div class="grid">
       ${stat('SCORE', score === undefined ? '—' : fmtNum(score, 0), 'up', '', missingReason('mom'))}
       ${stat('SUM', fmtNum(t.mom, 2), '', '', missingReason('mom'))}
-      ${stat('MONTHS UP', monthly.length ? `${monthly.filter((s) => s > 0).length}/${monthly.length}` : '—')}
+      ${stat('BLOCKS UP', monthly.length ? `${monthly.filter((s) => s > 0).length}/${monthly.length}` : '—')}
     </div>
     ${monthly.length ? `<div class="mom-bars">${monthly.map((s, i) => {
       const height = peak ? Math.abs(s) / peak * 46 : 0;
-      return `<span class="mom-bar" title="${esc(momMonths[i] || '')}  ${fmtNum(s, 3)}">` +
+      const b = momBlocks[i] || {};
+      return `<span class="mom-bar" title="${esc(b.from || '')} to ${esc(b.to || '')}  ${fmtNum(s, 3)}">` +
         `<span class="mom-fill ${s >= 0 ? 'up' : 'dn'}" style="height:${height.toFixed(1)}%"></span></span>`;
     }).join('')}</div>
-    <div class="mom-axis">${momMonths.map((m) =>
-      `<span>${esc(m.slice(5, 7))}</span>`).join('')}</div>
-    <p class="note">One term per month, ${esc(momMonths[0])} to ${esc(momMonths[momMonths.length - 1])},
-    each the month's mean daily log return over the volatility of the 63 sessions ending with it. The score
-    is their sum, so a company earns it by climbing in month after month rather than in one leap.</p>` : ''}
+    <div class="mom-axis">${momBlocks.map((b) =>
+      `<span>${esc((b.to || '').slice(5, 7))}</span>`).join('')}</div>
+    <p class="note">One term per 21-session block, ${esc((momBlocks[0] || {}).from)} to
+    ${esc((momBlocks[momBlocks.length - 1] || {}).to)}, each the block's mean daily log return over the
+    volatility of the 63 sessions ending with it. The score is their sum, so a company earns it by climbing
+    block after block rather than in one leap. Labels are the calendar month each block ends in; the blocks
+    themselves are counted in trading days, not months.</p>` : ''}
     <details><summary>HOW MOM WORKS ›</summary>
-      <p class="prose">Eleven completed months are scored, one at a time. For each, every daily log return
-      inside the month is averaged, and that average is divided by the daily volatility measured over the
-      63 sessions ending at the month's close. The eleven results are added together.</p>
-      <p class="prose">The most recent completed month is left out entirely, and so is the part-month the
-      data ends in — the twelve-minus-one skip, because the latest month tends to reverse rather than
-      persist. Here that means MOM sees up to ${esc(MOM_THROUGH)} and nothing after it, which is the grey
-      stretch on the chart above.</p>
-      <p class="prose">Volatility is measured over 63 sessions rather than the month itself because one
-      month offers only about 21 returns — far too few for a stable estimate, and it sits in the
-      denominator of every term.</p>
+      <p class="prose">Eleven blocks of 21 trading days are scored, one at a time. For each, every daily
+      log return inside the block is averaged, and that average is divided by the daily volatility measured
+      over the 63 sessions ending at the block's last close. The eleven results are added together.</p>
+      <p class="prose">The most recent 21 trading days are left out — the twelve-minus-one skip, because
+      the latest month tends to reverse rather than persist. Counting in sessions rather than waiting for
+      the calendar to turn keeps that cutoff a month behind the last close every day of the year. Here it
+      falls on ${esc(MOM_THROUGH)}; everything after is the grey stretch on the chart above.</p>
+      <p class="prose">Eleven blocks plus the skip is 252 sessions, so the whole measure spans a year
+      ending 21 days ago. The month labels under the bars are only where each block happens to finish.</p>
+      <p class="prose">Volatility is measured over 63 sessions rather than the block itself because 21
+      returns are far too few for a stable estimate, and it sits in the denominator of every term.</p>
       <p class="prose">Both halves of each term are daily quantities, so a monthly score is a unitless
       daily Sharpe and the sum needs no annualising. Annualising both halves would only multiply everything
       by √252, a constant that changes no ordering.</p>
       <p class="prose">Summing eleven terms rather than measuring one long window is what makes this a
       consistency measure. A company that rose steadily all year scores in every term; one that doubled in
-      a fortnight and drifted for ten months collects once and contributes nothing the rest of the year.</p>
+      a fortnight and drifted for ten blocks collects once and contributes nothing across the rest.</p>
       <p class="prose">The sum above is absolute and never changes. The score beside it is that sum's
       standing among the ${rank.count} rows currently on screen, where 100 is the strongest of them. Filter
       the list and every score is recomputed, because the field being measured against has changed.</p>
-      <p class="prose">It stays blank until a company has traded all eleven months plus the 63-session
-      run-up the first one needs. Summing whichever months happened to exist would give a younger company a
-      smaller number rather than a worse one, which is not a ranking.</p>
+      <p class="prose">It stays blank until a company has traded all 252 sessions plus the 63-session
+      run-up the first block needs. Summing whichever blocks happened to exist would give a younger company
+      a smaller number rather than a worse one, which is not a ranking.</p>
     </details>
 
     <div class="section-title">RANK IN ${esc(scope)}</div>
@@ -1143,7 +1147,7 @@ function mountChart(points) {
   const note = $('chart-note');
   if (note) {
     note.textContent = showNose
-      ? `Grey: after ${MOM_THROUGH}, the month MOM skips plus the part-month since.`
+      ? `Grey: after ${MOM_THROUGH}, the 21 trading days MOM skips.`
       : allAfter
         ? `MOM's window ends ${MOM_THROUGH}, before this range begins — it sees none of this.`
         : '';

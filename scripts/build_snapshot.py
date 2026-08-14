@@ -34,6 +34,7 @@ MAX_WORKERS             concurrent API requests (default 8)
 
 from __future__ import annotations
 
+import bisect
 import json
 import math
 import os
@@ -87,12 +88,18 @@ WINDOWS = {"1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252, "2y": 504}
 # return" on the table means exactly that, so it can be checked against any
 # other source, and the skipping that momentum needs lives inside momentum.
 #
-# MOM scores each of eleven completed months on its own: the month's mean daily
-# log return over a 63-session volatility measured to that month's end, summed.
-# Eleven monthly scores rather than one window return is what makes it a
-# consistency measure -- a stock that climbed steadily every month scores in
-# every term, while one that doubled in a fortnight and drifted for ten months
+# MOM scores each of eleven 21-session blocks on its own: the block's mean daily
+# log return over a 63-session volatility measured to that block's end, summed.
+# Eleven scores rather than one window return is what makes it a consistency
+# measure -- a stock that climbed steadily through the year scores in every
+# term, while one that doubled in a fortnight and drifted for ten months
 # collects once and contributes nothing the rest of the year.
+#
+# The blocks roll with the as-of date rather than snapping to calendar months.
+# Counting back 21 sessions puts the cutoff a month behind the last close every
+# day of the year; waiting for the calendar to turn instead means that by the
+# end of a month the score is blind to nearly two, and the skip breathes between
+# one month and two depending on the date the pipeline happened to run.
 #
 # Both halves are daily quantities, so each monthly score is a unitless daily
 # Sharpe and the sum needs no annualising. Annualising both halves only ever
@@ -104,8 +111,9 @@ WINDOWS = {"1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252, "2y": 504}
 # The volatility window is 63 sessions rather than the month itself because a
 # single month offers about 21 returns, which is far too few for a stable
 # estimate -- and it sits in the denominator of every term.
-MOM_MONTHS = 11
-MOM_SKIP_MONTHS = 1
+MOM_BLOCKS = 11
+MOM_BLOCK_SESSIONS = 21
+MOM_SKIP_SESSIONS = 21
 MOM_VOL_SESSIONS = 63
 
 # Names that betray a note, bond, preferred or depositary line rather than a
@@ -400,85 +408,95 @@ def annualised_vol(closes: list[float], sessions: int) -> float | None:
     return statistics.pstdev(rets) * math.sqrt(TRADING_DAYS_PER_YEAR) * 100
 
 
-def mom_window(calendar: list[str]) -> list[str]:
-    """The eleven months MOM scores, as ``YYYY-MM``.
+def mom_blocks(calendar: list[str]) -> list[dict[str, str]]:
+    """The eleven 21-session blocks MOM scores, oldest first.
 
-    A month counts as completed only when the calendar carries a session in a
-    later one, so the part-month the data ends in is never scored. The most
-    recent completed month is then dropped -- the classic twelve-minus-one
-    skip, since the latest month tends to reverse rather than persist -- and
-    the eleven before it are what remain.
+    Counted back in trading days from the last session: the most recent 21 are
+    skipped, and the 231 before them divide into eleven blocks. Together with
+    the skip that is 252 sessions -- a year -- so this is twelve-minus-one
+    measured in sessions rather than snapped to the calendar.
 
-    Derived from the shared calendar rather than each ticker's own sessions, so
-    every company in a table is scored on exactly the same eleven months.
+    Each block carries the date its volatility window opens as well, and every
+    boundary comes from the shared calendar, so all companies in a table are
+    scored over exactly the same stretches of trading.
     """
-    months = sorted({day[:7] for day in calendar})
-    completed = months[:-1]
-    usable = completed[:-MOM_SKIP_MONTHS] if MOM_SKIP_MONTHS else completed
-    return usable[-MOM_MONTHS:]
+    n = len(calendar)
+    if n < MOM_SKIP_SESSIONS + MOM_BLOCKS * MOM_BLOCK_SESSIONS:
+        return []
+
+    last = n - 1 - MOM_SKIP_SESSIONS
+    blocks: list[dict[str, str]] = []
+    for step in range(MOM_BLOCKS - 1, -1, -1):
+        end = last - step * MOM_BLOCK_SESSIONS
+        start = end - MOM_BLOCK_SESSIONS + 1
+        vol_start = end - MOM_VOL_SESSIONS + 1
+        # Every block needs a close before its volatility window to take that
+        # window's first return from.
+        if vol_start < 1:
+            return []
+        blocks.append({"from": calendar[start], "to": calendar[end],
+                       "volFrom": calendar[vol_start]})
+    return blocks
 
 
 def mom_meta(calendar: list[str]) -> dict[str, Any]:
     """What MOM covered, so the app can say so and grey what it did not.
 
-    `through` is the last session MOM sees. Everything after it -- the skipped
-    month and the part-month the data ends in -- is the stretch the score is
-    blind to, which is exactly what the app draws in grey.
+    `through` is the last session MOM sees -- 21 trading days back from the last
+    close. Everything after it is the stretch the score is blind to, which is
+    exactly what the app draws in grey.
     """
-    months = mom_window(calendar)
-    through = max((d for d in calendar if d[:7] == months[-1]), default=None) if months else None
+    blocks = mom_blocks(calendar)
     return {
-        "months": months,
+        "blocks": blocks,
+        "blockSessions": MOM_BLOCK_SESSIONS,
+        "skipSessions": MOM_SKIP_SESSIONS,
         "volSessions": MOM_VOL_SESSIONS,
-        "skipMonths": MOM_SKIP_MONTHS,
-        "through": through,
-        "measure": "sum over 11 months of (mean daily log return / 63-session daily volatility)",
+        "through": blocks[-1]["to"] if blocks else None,
+        "measure": ("sum over 11 rolling 21-session blocks of "
+                    "(mean daily log return / 63-session daily volatility)"),
     }
 
 
-def monthly_momentum(dated: list[tuple[str, float]],
-                     months: list[str]) -> tuple[float | None, list[float]]:
-    """MOM and the eleven monthly scores it sums.
+def block_momentum(dated: list[tuple[str, float]],
+                   blocks: list[dict[str, str]]) -> tuple[float | None, list[float]]:
+    """MOM and the eleven block scores it sums.
 
-    Each month contributes its mean daily log return divided by the daily
+    Each block contributes its mean daily log return divided by the daily
     volatility of the 63 sessions ending with it. All eleven or nothing: a sum
-    over whichever months happened to exist would be a smaller number for a
+    over whichever blocks happened to exist would be a smaller number for a
     younger company rather than a worse one, which is not a ranking.
+
+    Blocks arrive as dates rather than offsets, so a company that missed a
+    session finds fewer returns inside one and scores nothing, rather than
+    silently having its blocks slide out of step with everyone else's.
     """
-    if len(months) < MOM_MONTHS or len(dated) < 2:
+    if len(blocks) < MOM_BLOCKS or len(dated) < 2:
         return None, []
 
+    days = [day for day, _ in dated]
     # Log returns indexed against `dated`; index 0 has no predecessor.
     rets: list[float | None] = [None]
     for (_, before), (_, after) in zip(dated, dated[1:]):
         rets.append(math.log(after / before) if before > 0 and after > 0 else None)
 
-    first: dict[str, int] = {}
-    last: dict[str, int] = {}
-    for i, (day, _) in enumerate(dated):
-        first.setdefault(day[:7], i)
-        last[day[:7]] = i
-
     scores: list[float] = []
-    for month in months:
-        if month not in last:
-            return None, []
-        start, end = max(first[month], 1), last[month]
-        in_month = [rets[i] for i in range(start, end + 1) if rets[i] is not None]
-        if not in_month:
+    for block in blocks:
+        end = bisect.bisect_right(days, block["to"]) - 1
+        start = bisect.bisect_left(days, block["from"])
+        inside = [rets[i] for i in range(max(start, 1), end + 1) if rets[i] is not None]
+        if len(inside) < MOM_BLOCK_SESSIONS:
             return None, []
 
-        floor = end - MOM_VOL_SESSIONS + 1
-        if floor < 1:
-            return None, []
-        window = [rets[i] for i in range(floor, end + 1) if rets[i] is not None]
+        floor = bisect.bisect_left(days, block["volFrom"])
+        window = [rets[i] for i in range(max(floor, 1), end + 1) if rets[i] is not None]
         if len(window) < MOM_VOL_SESSIONS:
             return None, []
 
         deviation = statistics.pstdev(window)
         if deviation <= 0:
             return None, []
-        scores.append((sum(in_month) / len(in_month)) / deviation)
+        scores.append((sum(inside) / len(inside)) / deviation)
 
     return sum(scores), scores
 
@@ -520,7 +538,7 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
     returns["ytd"] = ytd_change(dated)
 
     vol_1y = annualised_vol(closes, TRADING_DAYS_PER_YEAR)
-    mom_total, mom_scores = monthly_momentum(dated, mom_window(calendar))
+    mom_total, mom_scores = block_momentum(dated, mom_blocks(calendar))
 
     return {
         **{k: entry[k] for k in ("symbol", "name", "sector", "industry", "exchange", "logo")},
@@ -532,7 +550,7 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
         "returns": {k: (round(v, 2) if v is not None else None) for k, v in returns.items()},
         # The eleven terms the score sums, kept so it can be checked rather than
         # taken on trust -- and so the app can show how evenly they fell.
-        "momMonths": [_round(s, 3) for s in mom_scores],
+        "momBlocks": [_round(s, 3) for s in mom_scores],
         "volatility": {
             "30d": _round(annualised_vol(closes, 30)),
             "90d": _round(annualised_vol(closes, 90)),
