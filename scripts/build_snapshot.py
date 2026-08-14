@@ -305,8 +305,8 @@ def wanted(universe: list[dict[str, Any]]) -> list[dict[str, Any]]:
         per_sector[sector] = per_sector.get(sector, 0) + 1
         chosen[entry["symbol"]] = entry
 
-    log(f"wanted: {len(chosen)} unique symbols across the overall table and "
-        f"{len(per_sector)} sectors")
+    log(f"wanted: {len(chosen)} unique symbols across both whole-market bands "
+        f"and {len(per_sector)} sectors")
     return [e for e in universe if e["symbol"] in chosen]
 
 
