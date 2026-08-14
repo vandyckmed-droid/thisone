@@ -14,7 +14,15 @@ import {
 
 // app/src/components/UI.js
 import React, { useState } from "react";
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View
+} from "react-native";
 
 // app/src/haptics.js
 import * as Haptics from "expo-haptics";
@@ -149,6 +157,62 @@ function Disclosure({ label, children }) {
       {open && <View style={styles.disclosureBody}>{children}</View>}
     </View>;
 }
+function SelectSheet({ title, options, value, visible, onSelect, onClose }) {
+  return <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+        {
+    /* The inner press is swallowed so tapping the sheet itself does not
+       dismiss it; only the backdrop does. */
+  }
+        <Pressable style={styles.sheet} onPress={() => {
+  }}>
+          <Text style={styles.sheetTitle}>{title}</Text>
+          <ScrollView bounces={false}>
+            {options.map((option) => {
+    const active = option.value === value;
+    return <Pressable
+      key={option.value}
+      onPress={() => {
+        tick();
+        onSelect(option.value);
+        onClose();
+      }}
+      style={({ pressed }) => [styles.sheetRow, pressed && styles.sheetRowPressed]}
+    >
+                  <Text style={[styles.sheetLabel, active && styles.sheetLabelActive]}>
+                    {option.label}
+                  </Text>
+                  <Text style={[styles.sheetCount, active && styles.sheetLabelActive]}>
+                    {active ? `${option.count}  \u2713` : option.count}
+                  </Text>
+                </Pressable>;
+  })}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>;
+}
+function SelectButton({ label, active, onPress }) {
+  return <Pressable
+    onPress={() => {
+      tick();
+      onPress();
+    }}
+    style={({ pressed }) => [
+      styles.select,
+      active && styles.selectActive,
+      pressed && styles.selectPressed
+    ]}
+  >
+      <Text
+    numberOfLines={1}
+    style={[styles.selectText, active && styles.selectTextActive]}
+  >
+        {label}
+      </Text>
+      <Text style={[styles.selectMark, active && styles.selectTextActive]}>▾</Text>
+    </Pressable>;
+}
 function SectionTitle({ children, right }) {
   return <View style={styles.sectionRow}>
       <Text style={styles.section}>{children}</Text>
@@ -192,6 +256,65 @@ var styles = StyleSheet.create({
   // pill once letterSpacing is applied.
   chipText: { color: C.dim, fontFamily: MONO, fontSize: 10, lineHeight: 13, letterSpacing: 0.8 },
   chipTextActive: { color: C.bg },
+  select: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 11,
+    paddingVertical: 9,
+    borderRadius: S.radius,
+    borderWidth: S.hairline,
+    borderColor: C.line,
+    backgroundColor: C.surface,
+    maxWidth: 150
+  },
+  selectActive: { borderColor: C.acid },
+  selectPressed: { borderColor: C.faint },
+  selectText: {
+    color: C.dim,
+    fontFamily: MONO,
+    fontSize: 10,
+    lineHeight: 13,
+    letterSpacing: 0.8,
+    flexShrink: 1
+  },
+  selectTextActive: { color: C.acid },
+  selectMark: { color: C.faint, fontFamily: MONO, fontSize: 10, marginLeft: 6 },
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.72)",
+    justifyContent: "flex-end"
+  },
+  sheet: {
+    backgroundColor: C.surface,
+    borderTopWidth: S.hairline,
+    borderTopColor: C.line,
+    borderTopLeftRadius: 14,
+    borderTopRightRadius: 14,
+    paddingTop: 16,
+    paddingBottom: 28,
+    maxHeight: "72%"
+  },
+  sheetTitle: {
+    color: C.faint,
+    fontFamily: MONO,
+    fontSize: 10,
+    letterSpacing: 1.6,
+    paddingHorizontal: S.gutter,
+    paddingBottom: 10
+  },
+  sheetRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: S.gutter,
+    paddingVertical: 13,
+    borderTopWidth: S.hairline,
+    borderTopColor: C.lineSoft
+  },
+  sheetRowPressed: { backgroundColor: C.surfaceHi },
+  sheetLabel: { color: C.text, fontFamily: MONO, fontSize: 12, letterSpacing: 0.5 },
+  sheetLabelActive: { color: C.acid },
+  sheetCount: { color: C.faint, fontFamily: MONO, fontSize: 11 },
   disclosure: {
     marginTop: 18,
     borderTopWidth: S.hairline,
@@ -359,8 +482,15 @@ function arrange(tickers, { sortKey, query, sector, direction = "desc" }) {
     return descending ? bv - av : av - bv;
   });
 }
-function sectorsOf(tickers) {
-  return ["All", ...Array.from(new Set(tickers.map((t) => t.sector))).sort()];
+function sectorOptions(tickers) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const ticker of tickers) {
+    counts.set(ticker.sector, (counts.get(ticker.sector) || 0) + 1);
+  }
+  return [
+    { value: "All", label: "ALL SECTORS", count: tickers.length },
+    ...Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([name, count]) => ({ value: name, label: name.toUpperCase(), count }))
+  ];
 }
 function seriesFor(ticker, dates, sessions) {
   const points = [];
@@ -568,8 +698,10 @@ function RanksScreen({
   const [direction, setDirection] = useState3("desc");
   const [query, setQuery] = useState3("");
   const [sector, setSector] = useState3("All");
+  const [sectorOpen, setSectorOpen] = useState3(false);
   const sort = sortByKey(sortKey);
-  const sectors = useMemo(() => sectorsOf(tickers), [tickers]);
+  const sectors = useMemo(() => sectorOptions(tickers), [tickers]);
+  const sectorLabel = sector === "All" ? "ALL SECTORS" : sector.toUpperCase();
   const rows = useMemo(
     () => arrange(tickers, { sortKey, query, sector, direction }),
     [tickers, sortKey, query, sector, direction]
@@ -597,7 +729,8 @@ function RanksScreen({
 
       {!!staleMessage && <Banner text={staleMessage} />}
 
-      <TextInput
+      <View3 style={styles3.filterRow}>
+        <TextInput
     value={query}
     onChangeText={setQuery}
     placeholder="SEARCH SYMBOL OR NAME"
@@ -606,6 +739,12 @@ function RanksScreen({
     autoCorrect={false}
     style={styles3.search}
   />
+        <SelectButton
+    label={sectorLabel}
+    active={sector !== "All"}
+    onPress={() => setSectorOpen(true)}
+  />
+      </View3>
 
       <ChipRow>
         {SORTS.map((s) => <Chip
@@ -613,16 +752,6 @@ function RanksScreen({
     label={s.short}
     active={s.key === sortKey}
     onPress={() => pickSort(s.key)}
-  />)}
-      </ChipRow>
-
-      <ChipRow>
-        {sectors.map((name) => <Chip
-    key={name}
-    compact
-    label={name === "All" ? "ALL SECTORS" : name.toUpperCase()}
-    active={name === sector}
-    onPress={() => setSector(name)}
   />)}
       </ChipRow>
 
@@ -656,6 +785,14 @@ function RanksScreen({
     ListEmptyComponent={<Empty title="NO MATCHES" hint="Nothing in the universe matches that filter." />}
     contentContainerStyle={rows.length ? null : { flexGrow: 1 }}
   />
+      <SelectSheet
+    title="FILTER BY SECTOR"
+    options={sectors}
+    value={sector}
+    visible={sectorOpen}
+    onSelect={setSector}
+    onClose={() => setSectorOpen(false)}
+  />
     </View3>;
 }
 var styles3 = StyleSheet3.create({
@@ -671,9 +808,15 @@ var styles3 = StyleSheet3.create({
   title: { color: C.text, fontFamily: MONO, fontSize: 19, letterSpacing: 3 },
   subtitle: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1, marginTop: 4 },
   direction: { color: C.acid, fontFamily: MONO, fontSize: 10, letterSpacing: 1, paddingTop: 6 },
-  search: {
+  filterRow: {
+    flexDirection: "row",
+    alignItems: "stretch",
     marginHorizontal: S.gutter,
-    marginBottom: 10,
+    marginBottom: 10
+  },
+  search: {
+    flex: 1,
+    marginRight: 8,
     paddingHorizontal: 11,
     paddingVertical: 9,
     backgroundColor: C.surface,
