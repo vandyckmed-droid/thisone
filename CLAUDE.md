@@ -21,6 +21,31 @@ scheme is not clickable.
 Do not hand back a QR code to scan, a file tree to paste into Snack, or a
 "regenerate it with this command". Run the command and paste the result.
 
+**Every reply ends with a tap link — no exceptions, including replies that
+changed nothing.** Which link depends on whether the app moved:
+
+| Did this reply change `app/`? | Link to end with |
+| --- | --- |
+| Yes | Publish a new Snack and use that; update the standing link below |
+| No | Repeat the standing link verbatim |
+
+### Standing link
+
+```
+exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A55.0.0&channel-name=production&snack=_l78c1v7XG5_cfDeKl0Zb
+https://snack.expo.dev/_l78c1v7XG5_cfDeKl0Zb
+```
+
+Keep this block current — it is the answer to "what do I tap right now".
+
+The split exists because **an anonymous Snack is immutable**. Passing an
+existing id to the save endpoint mints a *new* id and leaves the original
+untouched, so there is no way to update a published link in place without an
+Expo account. Every app change therefore burns a new id, and if Expo Go scopes
+`AsyncStorage` per Snack rather than per runtime, a new id costs the user their
+watchlist. That is unverified either way, so do not spend ids casually:
+republish when the app actually changed, and otherwise repeat the standing link.
+
 A Snack is a **frozen copy** of the bundle at save time. Editing `app/src/` does
 nothing to an already-published link, so republishing is not optional after an
 app change — the old link would keep serving the old bug. Data is different:
