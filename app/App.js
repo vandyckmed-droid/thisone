@@ -2,7 +2,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
 
 import { ActionButton, Banner, Loading, Snackbar } from './src/components/UI';
-import { changeOver, downsample, fetchSnapshot, seriesFor } from './src/data';
+import {
+  changeOver, downsample, fetchIndex, fetchUniverse, findUniverse, seriesFor,
+} from './src/data';
 import { setHapticsEnabled, tick } from './src/haptics';
 import RanksScreen from './src/screens/RanksScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
@@ -11,7 +13,8 @@ import WatchlistScreen from './src/screens/WatchlistScreen';
 import {
   DEFAULT_SETTINGS,
   clearAll,
-  loadCachedSnapshot,
+  loadCachedIndex,
+  loadCachedUniverse,
   loadSettings,
   loadWatchlist,
   saveSettings,
@@ -30,11 +33,24 @@ const SPARK_POINTS = 24;
 const FEEDBACK_MS = 6000;
 const UNDO_MS = 6000;
 
+/** Sparkline geometry, derived once per table rather than once per render. */
+const decorate = (table) =>
+  table.tickers.map((t) => {
+    const points = seriesFor(t, table.dates, SPARK_SESSIONS);
+    return { ...t, spark: downsample(points, SPARK_POINTS), sparkChange: changeOver(points) };
+  });
+
 export default function App() {
   const [ready, setReady] = useState(false);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [watchlist, setWatchlist] = useState([]);
-  const [snapshot, setSnapshot] = useState(null);
+
+  // The index names the universes on offer; `tables` holds the ones fetched so
+  // far, keyed the same way, so switching back to a sector already visited is
+  // instant and the watchlist can reach across all of them.
+  const [index, setIndex] = useState(null);
+  const [tables, setTables] = useState({});
+  const [pendingKey, setPendingKey] = useState(null);
 
   const [tab, setTab] = useState('ranks');
   const [openSymbol, setOpenSymbol] = useState(null);
@@ -46,10 +62,10 @@ export default function App() {
   const [refreshResult, setRefreshResult] = useState(null);
   const [undoItem, setUndoItem] = useState(null);
 
-  // Sort, search and sector live here rather than inside the screens, so they
-  // survive opening a ticker and switching tabs. Each list keeps its own.
+  // Sort, search and the sector/industry cut live here rather than inside the
+  // screens, so they survive opening a ticker and switching tabs.
   const [ranksState, setRanksState] = useState({
-    sortKey: DEFAULT_SETTINGS.defaultSort, direction: 'desc', query: '', sector: 'All',
+    sortKey: DEFAULT_SETTINGS.defaultSort, direction: 'desc', query: '', sector: 'All', industry: 'All',
   });
   const [watchState, setWatchState] = useState({ sortKey: 'change' });
 
@@ -57,9 +73,15 @@ export default function App() {
   const watchList = useRef(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  // Universes whose fetch failed, so the watchlist hydration below gives up on
+  // them instead of retrying in a loop.
+  const skipHydrate = useRef(new Set());
 
   const patchRanks = useCallback((p) => setRanksState((prev) => ({ ...prev, ...p })), []);
   const patchWatch = useCallback((p) => setWatchState((prev) => ({ ...prev, ...p })), []);
+
+  const universeKey = settings.universeKey;
+  const snapshot = tables[universeKey] || null;
 
   // The haptics module holds its own enabled flag so call sites stay terse.
   useEffect(() => { setHapticsEnabled(settings.haptics); }, [settings.haptics]);
@@ -76,46 +98,71 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [undoItem]);
 
+  const store = useCallback((key, table) => {
+    setTables((prev) => ({ ...prev, [key]: table }));
+  }, []);
+
+  /** Pull the index, then whichever universe is open. */
   const refresh = useCallback(async (urlOverride) => {
     const url = typeof urlOverride === 'string' ? urlOverride : settingsRef.current.sourceUrl;
     setRefreshing(true);
     try {
-      const result = await fetchSnapshot(url);
-      setSnapshot(result.snapshot);
+      const listing = await fetchIndex(url);
+      setIndex(listing.index);
+
+      // A source swapped under our feet may not carry the universe that was
+      // open; fall back to whatever it lists first rather than fetching a 404.
+      const wanted = settingsRef.current.universeKey;
+      const universe = findUniverse(listing.index, wanted);
+      if (!universe) throw new Error('That source lists no universes');
+
+      const result = await fetchUniverse(url, universe);
+      store(universe.key, result.table);
+      if (universe.key !== wanted) {
+        setSettings((prev) => {
+          const next = { ...prev, universeKey: universe.key };
+          saveSettings(next);
+          return next;
+        });
+      }
+
       setFatal(null);
       setNotice(
         result.fromCache
-          ? `OFFLINE — SHOWING CACHED ${result.snapshot.dataDate} (${result.error})`
+          ? `OFFLINE — SHOWING CACHED ${result.table.dataDate} (${result.error})`
           : null
       );
       if (result.fetchedAt) setLastFetched(new Date(result.fetchedAt).toISOString());
       setRefreshResult(
         result.fromCache
-          ? { ok: false, message: `Could not reach the source (${result.error}). Showing the cached ${result.snapshot.dataDate} snapshot.` }
-          : { ok: true, message: `Updated just now — ${result.snapshot.universeSize} tickers, data date ${result.snapshot.dataDate}.` }
+          ? { ok: false, message: `Could not reach the source (${result.error}). Showing the cached ${result.table.dataDate} copy of ${result.table.title}.` }
+          : { ok: true, message: `Updated just now — ${result.table.title}, ${result.table.universeSize} tickers, data date ${result.table.dataDate}.` }
       );
     } catch (err) {
-      setFatal(err.message || 'Could not load the snapshot');
-      setRefreshResult({ ok: false, message: err.message || 'Could not load the snapshot.' });
+      setFatal(err.message || 'Could not load the data');
+      setRefreshResult({ ok: false, message: err.message || 'Could not load the data.' });
     } finally {
       setRefreshing(false);
     }
-  }, []);
+  }, [store]);
 
   // Boot: local state first so the app paints immediately, network after.
   useEffect(() => {
     (async () => {
-      const [storedSettings, storedWatchlist, cached] = await Promise.all([
-        loadSettings(), loadWatchlist(), loadCachedSnapshot(),
+      const [storedSettings, storedWatchlist, cachedIndex] = await Promise.all([
+        loadSettings(), loadWatchlist(), loadCachedIndex(),
       ]);
       setSettings(storedSettings);
       setWatchlist(storedWatchlist);
       patchRanks({ sortKey: storedSettings.defaultSort });
-      if (cached) setSnapshot(cached);
+      if (cachedIndex) setIndex(cachedIndex);
+
+      const cachedTable = await loadCachedUniverse(storedSettings.universeKey);
+      if (cachedTable) store(storedSettings.universeKey, cachedTable);
       setReady(true);
-      if (storedSettings.refreshOnOpen || !cached) await refresh();
+      if (storedSettings.refreshOnOpen || !cachedTable) await refresh();
     })();
-  }, [refresh, patchRanks]);
+  }, [refresh, patchRanks, store]);
 
   const updateSettings = useCallback((patch) => {
     setSettings((prev) => {
@@ -126,6 +173,77 @@ export default function App() {
     // Changing the default should take effect now, not on next launch.
     if (patch.defaultSort) patchRanks({ sortKey: patch.defaultSort, direction: 'desc' });
   }, [patchRanks]);
+
+  /**
+   * Switch universes.
+   *
+   * A cached copy is painted immediately and freshened behind the reader's
+   * back; only a universe never opened before makes anyone wait, and even then
+   * the list underneath stays put until the new one is in hand rather than
+   * blanking the screen.
+   */
+  const selectUniverse = useCallback(async (key) => {
+    if (key === settingsRef.current.universeKey) return;
+    const universe = findUniverse(index, key);
+    if (!universe) return;
+
+    const url = settingsRef.current.sourceUrl;
+    const commit = () => {
+      updateSettings({ universeKey: key });
+      // Sector and industry cuts belong to the table they were made in.
+      patchRanks({ sector: 'All', industry: 'All' });
+      if (ranksList.current) ranksList.current.scrollToOffset({ offset: 0, animated: false });
+    };
+
+    setPendingKey(key);
+    try {
+      if (!tables[key]) {
+        const cached = await loadCachedUniverse(key);
+        if (cached) { store(key, cached); commit(); }
+      }
+      const result = await fetchUniverse(url, universe);
+      store(key, result.table);
+      commit();
+      setNotice(
+        result.fromCache
+          ? `OFFLINE — SHOWING CACHED ${result.table.dataDate} (${result.error})`
+          : null
+      );
+      if (result.fetchedAt) setLastFetched(new Date(result.fetchedAt).toISOString());
+    } catch (err) {
+      setRefreshResult({ ok: false, message: `Could not load ${universe.title} (${err.message}).` });
+    } finally {
+      setPendingKey(null);
+    }
+  }, [index, tables, store, updateSettings, patchRanks]);
+
+  /**
+   * A starred name lives in whichever universe it was starred from, so the
+   * Watchlist can only show it once that table is loaded. Pull the missing ones
+   * in one at a time in the background until every star resolves.
+   */
+  useEffect(() => {
+    if (!ready || !index || !watchlist.length) return;
+    const have = new Set();
+    for (const table of Object.values(tables)) {
+      for (const t of table.tickers) have.add(t.symbol);
+    }
+    if (watchlist.every((s) => have.has(s))) return;
+
+    const next = index.universes.find((u) => !tables[u.key] && !skipHydrate.current.has(u.key));
+    if (!next) return;
+
+    let live = true;
+    (async () => {
+      try {
+        const result = await fetchUniverse(settingsRef.current.sourceUrl, next);
+        if (live) store(next.key, result.table);
+      } catch (err) {
+        skipHydrate.current.add(next.key);
+      }
+    })();
+    return () => { live = false; };
+  }, [ready, index, watchlist, tables, store]);
 
   const toggleStar = useCallback((symbol) => {
     setWatchlist((prev) => {
@@ -158,7 +276,9 @@ export default function App() {
   const resetAll = useCallback(async () => {
     await clearAll();
     setWatchlist([]);
+    setTables({});
     setSettings(DEFAULT_SETTINGS);
+    skipHydrate.current = new Set();
     await refresh(DEFAULT_SETTINGS.sourceUrl);
   }, [refresh]);
 
@@ -166,21 +286,46 @@ export default function App() {
     if (!settingsRef.current.hasScrubbed) updateSettings({ hasScrubbed: true });
   }, [updateSettings]);
 
-  // Sparkline geometry is derived once per snapshot rather than per render: a
-  // few hundred rows recomputing their own trend line on every scroll is the
-  // difference between a smooth list and a stuttering one.
-  const tickers = useMemo(() => {
-    if (!snapshot) return [];
-    return snapshot.tickers.map((t) => {
-      const points = seriesFor(t, snapshot.dates, SPARK_SESSIONS);
-      return { ...t, spark: downsample(points, SPARK_POINTS), sparkChange: changeOver(points) };
-    });
-  }, [snapshot]);
+  const tickers = useMemo(() => (snapshot ? decorate(snapshot) : []), [snapshot]);
 
-  const openTicker = useMemo(
-    () => tickers.find((t) => t.symbol === openSymbol) || null,
-    [tickers, openSymbol]
-  );
+  /**
+   * Every starred name, drawn from whichever tables are loaded.
+   *
+   * The open universe wins when a name appears in two of them, so the numbers
+   * on the Watchlist match the ones on Ranks rather than depending on which
+   * sector happened to load first.
+   */
+  const watchTickers = useMemo(() => {
+    if (!watchlist.length) return [];
+    const wanted = new Set(watchlist);
+    const found = new Map();
+    const order = [
+      ...Object.keys(tables).filter((k) => k !== universeKey),
+      ...(tables[universeKey] ? [universeKey] : []),
+    ];
+    for (const key of order) {
+      const table = tables[key];
+      for (const t of table.tickers) {
+        if (wanted.has(t.symbol)) found.set(t.symbol, { table, ticker: t });
+      }
+    }
+    return Array.from(found.values()).map(({ table, ticker }) => {
+      const points = seriesFor(ticker, table.dates, SPARK_SESSIONS);
+      return { ...ticker, spark: downsample(points, SPARK_POINTS), sparkChange: changeOver(points) };
+    });
+  }, [watchlist, tables, universeKey]);
+
+  // Opening a ticker from the Watchlist has to work even when it belongs to a
+  // sector table that is not the one on screen.
+  const openTicker = useMemo(() => {
+    if (!openSymbol) return null;
+    const here = tickers.find((t) => t.symbol === openSymbol);
+    if (here) return { ticker: here, table: snapshot };
+    const other = watchTickers.find((t) => t.symbol === openSymbol);
+    if (!other) return null;
+    const table = Object.values(tables).find((tb) => tb.tickers.some((t) => t.symbol === openSymbol));
+    return table ? { ticker: other, table } : null;
+  }, [openSymbol, tickers, snapshot, watchTickers, tables]);
 
   const onTab = (key) => {
     if (key === tab) {
@@ -198,7 +343,7 @@ export default function App() {
     return (
       <SafeAreaView style={styles.app}>
         <StatusBar barStyle="light-content" />
-        <Loading label="FETCHING SNAPSHOT" />
+        <Loading label="FETCHING DATA" />
       </SafeAreaView>
     );
   }
@@ -208,9 +353,9 @@ export default function App() {
       <SafeAreaView style={styles.app}>
         <StatusBar barStyle="light-content" />
         <View style={styles.fatal}>
-          <Text style={styles.fatalTitle} accessibilityRole="header">NO SNAPSHOT</Text>
+          <Text style={styles.fatalTitle} accessibilityRole="header">NO DATA</Text>
           <Text style={styles.fatalText}>{fatal}</Text>
-          <Text style={styles.fatalHint}>Check the snapshot URL under Settings, then try again.</Text>
+          <Text style={styles.fatalHint}>Check the data URL under Settings, then try again.</Text>
           <View style={styles.fatalActions}>
             <ActionButton label={refreshing ? 'RETRYING…' : 'RETRY'} busy={refreshing} onPress={() => refresh()} />
             <ActionButton label="OPEN SETTINGS" onPress={() => { setFatal(null); setTab('settings'); }} />
@@ -240,6 +385,10 @@ export default function App() {
           <RanksScreen
             snapshot={snapshot}
             tickers={tickers}
+            index={index}
+            universeKey={universeKey}
+            pendingKey={pendingKey}
+            onSelectUniverse={selectUniverse}
             staleMessage={notice}
             listState={ranksState}
             onListState={patchRanks}
@@ -249,7 +398,8 @@ export default function App() {
         </View>
         <View style={tab === 'watchlist' ? styles.pane : styles.paneHidden}>
           <WatchlistScreen
-            tickers={tickers}
+            tickers={watchTickers}
+            pending={watchlist.length - watchTickers.length}
             listState={watchState}
             onListState={patchWatch}
             listRef={watchList}
@@ -261,6 +411,8 @@ export default function App() {
             settings={settings}
             onChange={updateSettings}
             snapshot={snapshot}
+            index={index}
+            loadedCount={Object.keys(tables).length}
             lastFetched={lastFetched}
             watchlistCount={watchlist.length}
             onClearWatchlist={clearWatchlist}
@@ -276,9 +428,9 @@ export default function App() {
         {openTicker && (
           <View style={styles.overlay}>
             <TickerScreen
-              ticker={openTicker}
-              snapshot={snapshot}
-              starred={watchlist.includes(openTicker.symbol)}
+              ticker={openTicker.ticker}
+              snapshot={openTicker.table}
+              starred={watchlist.includes(openTicker.ticker.symbol)}
               onBack={() => setOpenSymbol(null)}
               onToggleStar={toggleStar}
               hintScrub={!settings.hasScrubbed}

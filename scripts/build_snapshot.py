@@ -8,31 +8,29 @@ GitHub with no backend in between.
 
 Pipeline stages
 ---------------
-1. universe   -- screen for eligible US common stocks, drop share-class and
-                 debt/preferred duplicates, take the top N by market cap, then
-                 extend it with names chosen to spread across sectors
+1. universe   -- screen for eligible US common stocks and drop share-class and
+                 debt/preferred duplicates
 2. prices     -- pull ~2 years of dividend-adjusted daily closes per ticker
 3. metrics    -- returns, annualised volatility, drawdown, rankings
 4. validate   -- refuse to publish a snapshot that fails any sanity check
-5. write      -- atomic replace, so a failed refresh leaves the last good
-                 snapshot exactly where it was
+5. write      -- one table of the largest TOP_N overall and one of the largest
+                 SECTOR_N in each sector, every file replaced atomically so a
+                 failed run leaves the last good copy exactly where it was
 
 Only the standard library is used, so CI needs no dependency install.
 
 Environment
 -----------
 FMP_API_KEY / API_KEY   required
-TOP_N                   size of the market-cap core (default 100)
-BALANCED_N              extra names chosen to spread sectors (default 200)
-SELECTION               "collar" (default) or "lookahead"
-SECTOR_CAP_PCT          most of the universe any one sector may hold (default 20)
-SECTOR_FLOOR_PCT        least any sector present may hold (default 4)
-LOOKAHEAD               candidates the lookahead method weighs (default 5)
-MOMENTUM_SKIP_RATIO     share of each momentum window left off its recent end
+TOP_N                   size of the overall table (default 300)
+SECTOR_N                size of each sector table (default 100)
+MIN_MARKET_CAP          screen floor (default 250M -- low enough that the
+                        smaller sectors can reach SECTOR_N)
+MIN_DOLLAR_VOLUME       average daily traded value floor (default 3M)
+MOMENTUM_SKIP_RATIO     share of every return window left off its recent end
                         (default 0.08 = 20 sessions per 250; 0 disables it)
-HISTORY_DAYS            calendar days of history to request (default 850 --
-                        must cover the longest window plus its skip)
-OUTPUT                  snapshot path (default data/snapshot.json)
+HISTORY_DAYS            calendar days of history to request (default 850)
+DATA_DIR                where to write (default data/)
 MAX_WORKERS             concurrent API requests (default 8)
 """
 
@@ -58,37 +56,24 @@ from typing import Any, Iterable
 API_ROOT = "https://financialmodelingprep.com/stable"
 API_KEY = os.environ.get("FMP_API_KEY") or os.environ.get("API_KEY") or ""
 
-# The universe is built in two parts. The core is the largest companies, full
-# stop. Beyond it, taking the next N by market cap would just deepen whichever
-# sectors are already largest -- another twenty technology names before a second
-# utility -- so the expansion is chosen to spread across sectors instead.
-CORE_N = int(os.environ.get("TOP_N", "100"))
-BALANCED_N = int(os.environ.get("BALANCED_N", "200"))
-TARGET_N = CORE_N + BALANCED_N
-
-# Balance is expressed as a share of the finished universe, not a count, so the
-# same numbers mean the same thing whether the table holds fifty names or five
-# thousand. A ceiling alone would leave the smallest sectors as tokens and a
-# floor alone would leave the largest dominant, so it takes both.
-SECTOR_CAP_PCT = float(os.environ.get("SECTOR_CAP_PCT", "20"))
-SECTOR_FLOOR_PCT = float(os.environ.get("SECTOR_FLOOR_PCT", "4"))
-SELECTION = os.environ.get("SELECTION", "collar")
-LOOKAHEAD = int(os.environ.get("LOOKAHEAD", "5"))
+# Two kinds of table, both plain: the largest TOP_N companies overall, and the
+# largest SECTOR_N within each sector. No balancing, no quotas -- a sector file
+# already is the sector, so nothing needs spreading.
+TOP_N = int(os.environ.get("TOP_N", "300"))
+SECTOR_N = int(os.environ.get("SECTOR_N", "100"))
 HISTORY_DAYS = int(os.environ.get("HISTORY_DAYS", "850"))
-MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "8"))
+MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "4"))
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUTPUT_PATH = os.environ.get("OUTPUT") or os.path.join(REPO_ROOT, "data", "snapshot.json")
+DATA_DIR = os.environ.get("DATA_DIR") or os.path.join(REPO_ROOT, "data")
+OUTPUT_PATH = os.environ.get("OUTPUT") or os.path.join(DATA_DIR, "snapshot.json")
+SECTOR_DIR = os.path.join(DATA_DIR, "sectors")
 
-# Screen a deliberately oversized candidate pool: dual share classes, baby
-# bonds and preferreds all carry their parent's market cap and would otherwise
-# crowd genuine companies out of the top 100.
-CANDIDATE_POOL = max((TARGET_N + max(25, BALANCED_N)) * 2, 300)
-# Enough spare candidates that the balancer has something to choose between:
-# picking 100 from a remainder of 100 is not a choice, it is the whole list.
-UNIVERSE_RESERVE = max(25, BALANCED_N)
-MIN_MARKET_CAP = 5_000_000_000
-MIN_DOLLAR_VOLUME = 20_000_000  # average daily traded value
+# Reaching a hundred names in the smaller sectors means screening well below
+# mega-cap: at a $5B floor only five sectors have a hundred to give.
+MIN_MARKET_CAP = int(os.environ.get("MIN_MARKET_CAP", 250_000_000))
+CANDIDATE_POOL = int(os.environ.get("CANDIDATE_POOL", "4000"))
+MIN_DOLLAR_VOLUME = int(os.environ.get("MIN_DOLLAR_VOLUME", 3_000_000))
 
 # A recent listing can still be a genuine mega cap, so the bar for including a
 # ticker is only "enough sessions to draw a chart and measure short-horizon
@@ -141,8 +126,15 @@ def log(msg: str) -> None:
 # --------------------------------------------------------------------------
 
 def fetch(endpoint: str, params: dict[str, Any] | None = None,
-          attempts: int = 4) -> Any:
-    """GET an FMP endpoint, retrying transient failures with backoff."""
+          attempts: int = 7) -> Any:
+    """GET an FMP endpoint, retrying transient failures with backoff.
+
+    Rate limiting is the failure that matters here. A 429 that exhausts its
+    retries does not raise -- it returns empty and the symbol quietly vanishes
+    from the table, which is how Disney, Boeing and Verizon went missing from a
+    run that otherwise looked clean. So 429s get many attempts and a long,
+    honest backoff, and the caller checks that nothing important dropped.
+    """
     query = dict(params or {})
     query["apikey"] = API_KEY
     url = f"{API_ROOT}/{endpoint}?{urllib.parse.urlencode(query)}"
@@ -158,6 +150,12 @@ def fetch(endpoint: str, params: dict[str, Any] | None = None,
             # 429 and 5xx are worth another go; anything else is our fault.
             if exc.code != 429 and exc.code < 500:
                 raise PipelineError(f"{endpoint}: HTTP {exc.code}") from exc
+            if exc.code == 429:
+                # Wait out the window the server names, or a growing pause.
+                retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                delay = int(retry_after) if (retry_after or "").isdigit() else min(60, 5 * (attempt + 1))
+                time.sleep(delay)
+                continue
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = exc
         else:
@@ -226,14 +224,14 @@ def load_profiles(symbols: list[str]) -> dict[str, dict[str, Any]]:
 
 
 def build_universe() -> list[dict[str, Any]]:
-    """Screen, enrich, dedupe by issuer, and take the top N by market cap."""
-    candidates = screen_candidates()[:CANDIDATE_POOL]
+    """Every eligible issuer the screen turned up, ordered by market cap."""
+    candidates = screen_candidates()
     profiles = load_profiles([c["symbol"] for c in candidates])
 
-    # One entry per issuer (CIK). Alphabet's GOOGL/GOOG, Berkshire's A/B
-    # shares and Verizon's baby bonds all share their parent's CIK, and all
-    # report the parent's full market cap -- keeping more than one would both
-    # double-count the company and push a real one out of the table.
+    # One entry per issuer (CIK). Alphabet's GOOGL/GOOG, Berkshire's A/B shares
+    # and Verizon's baby bonds all share their parent's CIK, and all report the
+    # parent's full market cap -- keeping more than one would both double-count
+    # the company and push a real one out of the table.
     by_issuer: dict[str, dict[str, Any]] = {}
     for cand in candidates:
         symbol = cand["symbol"]
@@ -264,19 +262,35 @@ def build_universe() -> list[dict[str, Any]]:
         incumbent = by_issuer.get(entry["cik"])
         # Most-traded listing wins: BRK-B over BRK-A, VZ over its 2054 notes.
         if incumbent is None or entry["dollarVolume"] > incumbent["dollarVolume"]:
-            if incumbent:
-                log(f"  dedupe: {entry['symbol']} replaces {incumbent['symbol']} ({name})")
             by_issuer[entry["cik"]] = entry
-        else:
-            log(f"  dedupe: dropping {entry['symbol']} in favour of {incumbent['symbol']}")
 
     ranked = sorted(by_issuer.values(), key=lambda e: e["marketCap"], reverse=True)
-    # Carry a reserve past the target so thin-history names can be replaced and
-    # the sector balancer has candidates to choose between.
-    universe = ranked[:TARGET_N + UNIVERSE_RESERVE]
-    log(f"universe: {len(ranked)} issuers deduped, carrying {len(universe)} candidates "
-        f"for a target of {TARGET_N} from {universe[0]['symbol']}")
-    return universe
+    log(f"universe: {len(ranked)} issuers after dedupe, from {ranked[0]['symbol']}")
+    return ranked
+
+
+def wanted(universe: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The union of every table we are about to publish.
+
+    A company in the overall top 300 is almost always in its sector's top 100
+    as well, so collecting the union first means its prices are fetched once
+    rather than once per file it appears in.
+    """
+    chosen: dict[str, dict[str, Any]] = {}
+    for entry in universe[:TOP_N]:
+        chosen[entry["symbol"]] = entry
+
+    per_sector: dict[str, int] = {}
+    for entry in universe:
+        sector = entry["sector"]
+        if per_sector.get(sector, 0) >= SECTOR_N:
+            continue
+        per_sector[sector] = per_sector.get(sector, 0) + 1
+        chosen[entry["symbol"]] = entry
+
+    log(f"wanted: {len(chosen)} unique symbols across the overall table and "
+        f"{len(per_sector)} sectors")
+    return [e for e in universe if e["symbol"] in chosen]
 
 
 # --------------------------------------------------------------------------
@@ -338,116 +352,6 @@ def align(series: dict[str, float], calendar: list[str]) -> list[float | None]:
         else:
             out.append(None)
     return out
-
-
-def collar_bounds(target: int, sectors: int) -> tuple[int, int]:
-    """Turn the percentages into counts, then make them arithmetically possible.
-
-    Percentages can describe an impossible table. Ten sectors under a 5% ceiling
-    cannot hold a hundred names, and eleven sectors each guaranteed 20% would
-    need two hundred percent of one. So the ceiling rises far enough to hold the
-    universe and the floor drops far enough to fit inside it -- always in that
-    order, because a table that cannot be filled is a worse failure than one
-    that is less balanced than requested.
-    """
-    if sectors <= 0:
-        return target, 0
-
-    cap = max(1, round(target * SECTOR_CAP_PCT / 100))
-    floor = int(target * SECTOR_FLOOR_PCT / 100)
-
-    cap = max(cap, -(-target // sectors))       # ceil: the ceiling must hold the table
-    if floor * sectors > target:
-        floor = target // sectors               # the floors must fit under it
-    floor = min(floor, cap)
-    return cap, floor
-
-
-def select_collar(candidates: list[dict[str, Any]], counts: dict[str, int],
-                  target: int, cap: int, floor: int) -> list[dict[str, Any]]:
-    """Pick `target` names in market-cap order, held between a floor and a cap.
-
-    Three passes: lift every sector to the floor, then fill by market cap while
-    no sector exceeds the cap, then -- only if the cap left the table short --
-    relax it rather than publish fewer names than asked for.
-
-    Unlike a lookahead, this states a guarantee instead of describing a
-    procedure: no sector above the cap, none below the floor, and everything
-    else in plain market-cap order.
-    """
-    by_sector: dict[str, list[dict[str, Any]]] = {}
-    for entry in candidates:
-        by_sector.setdefault(entry["sector"], []).append(entry)
-
-    chosen: list[dict[str, Any]] = []
-    taken: set[str] = set()
-
-    for sector, rows in by_sector.items():
-        shortfall = floor - counts.get(sector, 0)
-        for entry in rows[:max(0, shortfall)]:
-            if len(chosen) >= target:
-                break
-            chosen.append(entry)
-            taken.add(entry["symbol"])
-            counts[sector] = counts.get(sector, 0) + 1
-
-    overflow: list[dict[str, Any]] = []
-    for entry in candidates:
-        if len(chosen) >= target:
-            break
-        if entry["symbol"] in taken:
-            continue
-        if counts.get(entry["sector"], 0) < cap:
-            chosen.append(entry)
-            taken.add(entry["symbol"])
-            counts[entry["sector"]] = counts.get(entry["sector"], 0) + 1
-        else:
-            overflow.append(entry)
-
-    relaxed = 0
-    for entry in overflow:
-        if len(chosen) >= target:
-            break
-        chosen.append(entry)
-        counts[entry["sector"]] = counts.get(entry["sector"], 0) + 1
-        relaxed += 1
-
-    # The cap is a promise, so breaking it should never be quiet. This only
-    # happens when the candidate pool is too thin to fill the table any other
-    # way, which means the screen needs widening rather than the cap loosening.
-    if relaxed:
-        log(f"  NOTE: cap of {cap} relaxed for {relaxed} names -- "
-            f"too few candidates to fill {target} otherwise")
-
-    return chosen
-
-
-def select_balanced(candidates: list[dict[str, Any]], counts: dict[str, int],
-                    target: int, lookahead: int) -> list[dict[str, Any]]:
-    """Pick `target` names, spreading them across sectors.
-
-    Walking the remaining candidates in market-cap order, look at the next
-    `lookahead` and take the one whose sector is currently least represented,
-    breaking ties by market cap. Then count it and look again.
-
-    The lookahead is what keeps this honest. Choosing purely by smallest sector
-    would trawl the whole list for one more utility however far down it sat;
-    restricting the choice to the next few means a name still has to be roughly
-    next in line by size to be picked at all, and the balancing happens between
-    near-equals rather than across the entire tail.
-    """
-    chosen: list[dict[str, Any]] = []
-    pool = list(candidates)
-
-    while pool and len(chosen) < target:
-        window = pool[:lookahead]
-        # Least-represented sector wins; among equals, the largest company.
-        pick = min(window, key=lambda t: (counts.get(t["sector"], 0), -t["marketCap"]))
-        chosen.append(pick)
-        counts[pick["sector"]] = counts.get(pick["sector"], 0) + 1
-        pool.remove(pick)
-
-    return chosen
 
 
 # --------------------------------------------------------------------------
@@ -635,13 +539,14 @@ def apply_rankings(tickers: list[dict[str, Any]]) -> None:
 # Stage 4 -- validation
 # --------------------------------------------------------------------------
 
-def validate(snapshot: dict[str, Any], previous: dict[str, Any] | None) -> list[str]:
+def validate(snapshot: dict[str, Any], previous: dict[str, Any] | None,
+             expected: int) -> list[str]:
     """Every reason this snapshot must not replace the last good one."""
     errors: list[str] = []
     tickers = snapshot.get("tickers") or []
     calendar = snapshot.get("dates") or []
 
-    minimum = max(int(TARGET_N * 0.9), 1)
+    minimum = max(int(expected * 0.9), 1)
     if len(tickers) < minimum:
         errors.append(f"only {len(tickers)} tickers, need at least {minimum}")
     if len(calendar) < MIN_CALENDAR_SESSIONS:
@@ -706,84 +611,38 @@ def read_previous(path: str) -> dict[str, Any] | None:
         return None
 
 
-def build_snapshot() -> dict[str, Any]:
-    universe = build_universe()
-    histories = load_history([e["symbol"] for e in universe])
-    calendar = build_calendar(histories)
+SLUG = str.maketrans({" ": "-", "/": "-", "&": "and"})
 
-    # Work out metrics for every candidate first, in market-cap order. Selecting
-    # before knowing which names survive would mean balancing sectors across
-    # tickers that then drop out for want of history.
-    eligible: list[dict[str, Any]] = []
-    for entry in universe:
-        series = histories.get(entry["symbol"]) or {}
-        if not series:
-            log(f"  skip {entry['symbol']}: no price history")
-            continue
-        metrics = compute_metrics(entry, align(series, calendar), calendar)
-        if metrics is None:
-            log(f"  skip {entry['symbol']}: fewer than {MIN_TICKER_SESSIONS} sessions")
-            continue
-        metrics["cik"] = entry["cik"]
-        eligible.append(metrics)
 
-    core = eligible[:CORE_N]
-    counts: dict[str, int] = {}
-    for ticker in core:
-        counts[ticker["sector"]] = counts.get(ticker["sector"], 0) + 1
-    log(f"core: {len(core)} by market cap, {len(counts)} sectors")
+def slugify(sector: str) -> str:
+    return sector.lower().translate(SLUG)
 
-    sectors = len({t["sector"] for t in eligible})
-    cap, floor = collar_bounds(TARGET_N, sectors)
-    if SELECTION == "lookahead":
-        balanced = select_balanced(eligible[CORE_N:], counts, BALANCED_N, LOOKAHEAD)
-        detail = f"lookahead {LOOKAHEAD}"
-    else:
-        balanced = select_collar(eligible[CORE_N:], counts, BALANCED_N, cap, floor)
-        detail = (f"cap {cap} ({SECTOR_CAP_PCT:g}%), floor {floor} ({SECTOR_FLOOR_PCT:g}%) "
-                  f"over {sectors} sectors")
-    if balanced:
-        log(f"balanced: {len(balanced)} added from {len(eligible) - len(core)} "
-            f"candidates via {detail}")
 
-    tickers = core + balanced
-    tickers.sort(key=lambda t: t["marketCap"], reverse=True)
-    apply_rankings(tickers)
+def assemble(tickers: list[dict[str, Any]], calendar: list[str],
+             title: str, scope: str) -> dict[str, Any]:
+    """One published table: ranks are computed within it, not inherited.
 
-    spread = sorted(counts.items(), key=lambda kv: -kv[1])
-    log("sectors: " + ", ".join(f"{name} {n}" for name, n in spread))
-
-    latest = calendar[-1] if calendar else None
-    ytd_sessions = sum(1 for day in calendar if latest and day[:4] == latest[:4])
+    A sector file ranks its companies against each other, which is the only
+    reading that makes sense inside a sector -- #1 in Utilities means the best
+    utility, not the 47th best company overall.
+    """
+    rows = sorted(tickers, key=lambda t: t["marketCap"], reverse=True)
+    rows = [dict(t) for t in rows]
+    apply_rankings(rows)
     return {
-        "schema": 1,
+        "schema": 2,
         "generatedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
-        "dataDate": latest,
+        "dataDate": calendar[-1] if calendar else None,
         "source": "Financial Modeling Prep",
-        "universeSize": len(tickers),
-        # How the universe was chosen, so a consumer can tell a pure market-cap
-        # table from one that has been spread across sectors.
-        "selection": {
-            "method": SELECTION,
-            "core": len(core),
-            "balanced": len(balanced),
-            **({"lookahead": LOOKAHEAD} if SELECTION == "lookahead" else {
-                "sectorCapPct": SECTOR_CAP_PCT,
-                "sectorFloorPct": SECTOR_FLOOR_PCT,
-                "sectorCap": cap,
-                "sectorFloor": floor,
-            }),
-        },
-        # Published so the score can be checked rather than taken on trust:
-        # each window and how much of its recent end was left out.
-        # Published so every figure can be checked rather than trusted: how
-        # much of its recent end each window leaves out.
+        "title": title,
+        "scope": scope,
+        "universeSize": len(rows),
         "skip": {
             "ratio": round(SKIP_RATIO, 4),
             "minWindow": MIN_SKIP_WINDOW,
             "returns": {
                 **{k: window_skip(n) for k, n in WINDOWS.items()},
-                "ytd": window_skip(ytd_sessions),
+                "ytd": window_skip(sum(1 for d in calendar if calendar and d[:4] == calendar[-1][:4])),
             },
             "momentum": {k: window_skip(n) for k, n in MOMENTUM_WINDOWS.items()},
         },
@@ -794,8 +653,69 @@ def build_snapshot() -> dict[str, Any]:
         },
         "sessions": len(calendar),
         "dates": calendar,
-        "tickers": tickers,
+        "tickers": rows,
     }
+
+
+def build_tables() -> tuple[dict[str, Any], dict[str, dict[str, Any]], list[str]]:
+    """The overall table, one table per sector, and the shared calendar."""
+    universe = build_universe()
+    shortlist = wanted(universe)
+    histories = load_history([e["symbol"] for e in shortlist])
+    calendar = build_calendar(histories)
+
+    metrics: list[dict[str, Any]] = []
+    for entry in shortlist:
+        series = histories.get(entry["symbol"]) or {}
+        if not series:
+            continue
+        computed = compute_metrics(entry, align(series, calendar), calendar)
+        if computed is None:
+            continue
+        computed["cik"] = entry["cik"]
+        metrics.append(computed)
+
+    metrics.sort(key=lambda t: t["marketCap"], reverse=True)
+    log(f"metrics: {len(metrics)} of {len(shortlist)} shortlisted symbols usable")
+
+    # A symbol that fails to download does not raise -- it simply is not in the
+    # table, and a table missing Disney still passes every other check. So the
+    # ones that matter most are checked by name.
+    have = {t["symbol"] for t in metrics}
+    lost = [e["symbol"] for e in shortlist[:TOP_N] if e["symbol"] not in have]
+    if lost:
+        raise PipelineError(
+            f"{len(lost)} of the largest {TOP_N} companies have no usable history "
+            f"({', '.join(lost[:12])}) -- refusing to publish a table with holes in it"
+        )
+
+    overall = assemble(metrics[:TOP_N], calendar,
+                       f"Top {min(TOP_N, len(metrics))}", "all")
+
+    sectors: dict[str, dict[str, Any]] = {}
+    for sector in sorted({t["sector"] for t in metrics}):
+        rows = [t for t in metrics if t["sector"] == sector][:SECTOR_N]
+        if not rows:
+            continue
+        sectors[sector] = assemble(rows, calendar, sector, "sector")
+
+    widest = max((len(s) for s in sectors), default=0)
+    for sector, table in sorted(sectors.items(), key=lambda kv: -kv[1]["universeSize"]):
+        short = "" if table["universeSize"] >= SECTOR_N else "  (all available)"
+        log(f"  {sector:<{widest}}  {table['universeSize']:>3}{short}")
+
+    return overall, sectors, calendar
+
+
+def write_atomically(path: str, payload: dict[str, Any]) -> int:
+    """Write beside the target then rename, so readers never see a half file."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, separators=(",", ":"), ensure_ascii=False)
+        fh.write("\n")
+    os.replace(tmp, path)
+    return os.path.getsize(path)
 
 
 def main() -> int:
@@ -803,35 +723,51 @@ def main() -> int:
         log("FMP_API_KEY (or API_KEY) is not set")
         return 2
 
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
     previous = read_previous(OUTPUT_PATH)
 
     try:
-        snapshot = build_snapshot()
+        overall, sectors, calendar = build_tables()
     except PipelineError as exc:
         log(f"REFRESH FAILED: {exc}")
-        log("previous snapshot left untouched" if previous else "no previous snapshot exists")
+        log("previous files left untouched" if previous else "no previous files exist")
         return 1
 
-    errors = validate(snapshot, previous)
-    if errors:
-        log(f"VALIDATION FAILED ({len(errors)} problems):")
-        for err in errors[:25]:
-            log(f"  - {err}")
-        log("previous snapshot left untouched" if previous else "no previous snapshot exists")
+    # Every table is validated before any file is written, so a single bad
+    # sector cannot leave the set half updated.
+    problems: list[str] = []
+    problems += [f"overall: {e}" for e in validate(overall, previous, TOP_N)]
+    for sector, table in sectors.items():
+        problems += [f"{sector}: {e}" for e in validate(table, None, min(SECTOR_N, table["universeSize"]))]
+
+    if problems:
+        log(f"VALIDATION FAILED ({len(problems)} problems):")
+        for problem in problems[:25]:
+            log(f"  - {problem}")
+        log("previous files left untouched" if previous else "no previous files exist")
         return 1
 
-    # Write beside the target then rename: readers never observe a partial file,
-    # and a crash mid-write cannot destroy the last good snapshot.
-    tmp_path = f"{OUTPUT_PATH}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as fh:
-        json.dump(snapshot, fh, separators=(",", ":"), ensure_ascii=False)
-        fh.write("\n")
-    os.replace(tmp_path, OUTPUT_PATH)
+    total = write_atomically(OUTPUT_PATH, overall)
+    index = {
+        "generatedAt": overall["generatedAt"],
+        "dataDate": overall["dataDate"],
+        "sessions": overall["sessions"],
+        "universes": [
+            {"key": "all", "title": overall["title"], "scope": "all",
+             "size": overall["universeSize"], "file": "snapshot.json"},
+        ],
+    }
+    for sector, table in sorted(sectors.items()):
+        name = f"{slugify(sector)}.json"
+        total += write_atomically(os.path.join(SECTOR_DIR, name), table)
+        index["universes"].append({
+            "key": slugify(sector), "title": sector, "scope": "sector",
+            "size": table["universeSize"], "file": f"sectors/{name}",
+        })
 
-    size_kb = os.path.getsize(OUTPUT_PATH) / 1024
-    log(f"wrote {OUTPUT_PATH}: {snapshot['universeSize']} tickers, "
-        f"{snapshot['sessions']} sessions, {size_kb:.0f} KB, data date {snapshot['dataDate']}")
+    write_atomically(os.path.join(DATA_DIR, "index.json"), index)
+
+    log(f"wrote {1 + len(sectors)} tables plus an index, {total / 1024 / 1024:.1f} MB, "
+        f"data date {overall['dataDate']}")
     return 0
 
 

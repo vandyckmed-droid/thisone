@@ -7,8 +7,8 @@ import { C, MONO, S, T, fmtPct, tone } from '../theme';
 
 export default function WatchlistScreen({
   tickers,
+  pending,
   settings,
-  watchlist,
   onOpen,
   onToggleStar,
   onRefresh,
@@ -19,19 +19,17 @@ export default function WatchlistScreen({
 }) {
   const { sortKey } = listState;
 
-  const held = useMemo(
-    () => tickers.filter((t) => watchlist.includes(t.symbol)),
-    [tickers, watchlist]
-  );
-  const rows = useMemo(() => arrange(held, { sortKey, direction: 'desc' }), [held, sortKey]);
+  // App has already resolved the stars against every loaded universe, so this
+  // screen just sorts what it is handed.
+  const rows = useMemo(() => arrange(tickers, { sortKey, direction: 'desc' }), [tickers, sortKey]);
 
   // Unweighted mean of the day's moves: a rough read on the list as a whole,
   // not a portfolio return -- there are no positions or sizes here, which is
   // why the label says equal-weight rather than leaving it to be assumed.
   const average = useMemo(() => {
-    if (!held.length) return null;
-    return held.reduce((sum, t) => sum + (t.changePct || 0), 0) / held.length;
-  }, [held]);
+    if (!tickers.length) return null;
+    return tickers.reduce((sum, t) => sum + (t.changePct || 0), 0) / tickers.length;
+  }, [tickers]);
 
   const sort = sortByKey(sortKey);
 
@@ -41,7 +39,8 @@ export default function WatchlistScreen({
         <View style={styles.headerText}>
           <Text style={styles.title} accessibilityRole="header">WATCHLIST</Text>
           <Text style={styles.subtitle}>
-            {held.length} {held.length === 1 ? 'TICKER' : 'TICKERS'} TRACKED
+            {tickers.length} {tickers.length === 1 ? 'TICKER' : 'TICKERS'} TRACKED
+            {pending > 0 ? ` · LOADING ${pending} MORE` : ''}
           </Text>
         </View>
         {average !== null && (
@@ -55,7 +54,7 @@ export default function WatchlistScreen({
         )}
       </View>
 
-      {held.length > 0 && (
+      {tickers.length > 0 && (
         <ChipRow accessibilityLabel="Sort watchlist by metric">
           {SORTS.map((s) => (
             <Chip
@@ -69,6 +68,19 @@ export default function WatchlistScreen({
         </ChipRow>
       )}
 
+      {tickers.length > 0 && (
+        // The numbers down the left are places within this list. A rank carried
+        // over from a table would be meaningless here: these names come from
+        // whichever universes they were starred in, and #4 of the Top 300 sits
+        // beside #4 of a hundred utilities without the two being comparable.
+        <View style={styles.columns}>
+          <Text style={styles.colLeft}>#  IN THIS LIST</Text>
+          <Text style={styles.colRight}>
+            PRICE / <Text style={styles.colMetric}>{sort.label}</Text>
+          </Text>
+        </View>
+      )}
+
       <FlatList
         ref={listRef}
         data={rows}
@@ -76,7 +88,7 @@ export default function WatchlistScreen({
         renderItem={({ item, index }) => (
           <TickerRow
             ticker={item}
-            position={item.ranks[sort.rank] ?? index + 1}
+            position={index + 1}
             sort={sort}
             settings={settings}
             starred
@@ -90,7 +102,7 @@ export default function WatchlistScreen({
         ListEmptyComponent={
           <Empty
             title="NOTHING TRACKED YET"
-            hint="Tap the star beside any row on the Ranks screen, or open a ticker and tap WATCH."
+            hint="Tap the star beside any row on the Ranks screen, or open a ticker and tap WATCH. Stars from every universe land here together."
           />
         }
         contentContainerStyle={rows.length ? null : { flexGrow: 1 }}
@@ -115,4 +127,18 @@ const styles = StyleSheet.create({
   avgBox: { alignItems: 'flex-end' },
   avgLabel: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.6 },
   avgValue: { fontFamily: MONO, fontSize: T.large, marginTop: 4 },
+
+  columns: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: S.gutter,
+    paddingBottom: 8,
+    paddingTop: 4,
+    borderBottomWidth: S.hairline,
+    borderBottomColor: C.line,
+  },
+  colLeft: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8 },
+  colRight: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8 },
+  colMetric: { color: C.text },
 });
