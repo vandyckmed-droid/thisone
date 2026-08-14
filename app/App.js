@@ -10,6 +10,7 @@ import {
 
 import { Banner, Loading } from './src/components/UI';
 import { downsample, changeOver, fetchSnapshot, seriesFor } from './src/data';
+import { setHapticsEnabled, tick } from './src/haptics';
 import RanksScreen from './src/screens/RanksScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 import TickerScreen from './src/screens/TickerScreen';
@@ -52,6 +53,11 @@ export default function App() {
   // the ref keeps that callback stable instead of re-created on every change.
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+
+  // The haptics module holds its own enabled flag so call sites stay terse.
+  useEffect(() => {
+    setHapticsEnabled(settings.haptics);
+  }, [settings.haptics]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -232,7 +238,14 @@ export default function App() {
         {TABS.map((t) => {
           const active = t.key === tab;
           return (
-            <Pressable key={t.key} style={styles.tab} onPress={() => setTab(t.key)}>
+            <Pressable
+              key={t.key}
+              style={styles.tab}
+              onPress={() => {
+                if (t.key !== tab) tick();
+                setTab(t.key);
+              }}
+            >
               <View style={[styles.tabMark, active && styles.tabMarkActive]} />
               <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
                 {t.label}

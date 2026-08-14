@@ -128,6 +128,12 @@ export default function SettingsScreen({
         onChange={(v) => onChange({ showSparklines: v })}
       />
       <Toggle
+        label="Haptics"
+        hint="Taps, chip selections and a tick per session while scrubbing a chart"
+        value={settings.haptics}
+        onChange={(v) => onChange({ haptics: v })}
+      />
+      <Toggle
         label="Refresh on open"
         hint="Otherwise the cached snapshot is used until you pull to refresh"
         value={settings.refreshOnOpen}
