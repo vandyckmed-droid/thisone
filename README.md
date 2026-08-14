@@ -1,16 +1,16 @@
 # Top 300
 
-Daily rankings for large US common stocks on your phone, with no backend — the
-300 largest by market cap, plus the 100 largest inside each of the eleven
-sectors, as twelve static JSON files.
+Daily rankings for large US common stocks, with no backend — the 300 largest by
+market cap, plus the 100 largest inside each of the eleven sectors, as twelve
+static JSON files.
 
 ```
-FMP  ->  build_snapshot.py  ->  validated JSON  ->  GitHub  ->  Expo Go
+FMP  ->  build_snapshot.py  ->  validated JSON  ->  build_web.py  ->  one HTML file
 ```
 
-The pipeline is run by hand and commits static files. The phone app fetches
-them straight from GitHub. There is no server, no database and no account
-anywhere in the loop.
+The pipeline is run by hand and commits static files. The app is a single
+self-contained web page built from them. There is no server, no database and no
+account anywhere in the loop.
 
 ---
 
@@ -19,13 +19,14 @@ anywhere in the loop.
 | Path | What it is |
 | --- | --- |
 | `scripts/build_snapshot.py` | The whole pipeline: universe, prices, metrics, validation, write |
-| `scripts/bundle_snack.sh` | Folds `app/` into the single-file `app/snack/App.js` |
-| `scripts/publish_snack.py` | Publishes that bundle as a Snack, prints a tap-to-open link |
-| `scripts/make_snack_url.py` | A Snack link that keeps the project modular, for editing |
+| `scripts/fetch_logos.py` | Caches every company logo into `web/logos.json` |
+| `scripts/build_web.py` | Folds `data/` and the logos into one self-contained page |
+| `web/index.template.html` | The app itself — edit here |
+| `web/logos.json` | Base64 WebP logos by symbol, plus which are opaque |
 | `data/index.json` | The list of universes — the first file the app reads |
 | `data/snapshot.json` | The Top 300 |
 | `data/sectors/*.json` | One file per sector, the 100 largest in each |
-| `app/` | React Native app for Expo Snack / Expo Go |
+| `app/src/` | The retired React Native original, kept for reference |
 
 ---
 
@@ -254,13 +255,15 @@ By hand, whenever the data should move:
 ```bash
 export FMP_API_KEY=your_key
 python3 scripts/build_snapshot.py
-git add data && git commit -m "Refresh data" && git push
+python3 scripts/fetch_logos.py           # only if the universe gained symbols
+python3 scripts/build_web.py             # then republish web/top300.html
+git add -A && git commit -m "Refresh data" && git push
 ```
 
-That is the whole procedure. The app reads `data/` from `main` at runtime, so a
-push reaches every already-published Snack link without republishing anything —
-data and app are refreshed independently, and only an app change needs a new
-Snack.
+The rebuild and republish are not optional. The published page is
+self-contained — it makes no network requests at all — so committing fresh
+`data/` changes nothing anyone can see until the page is rebuilt from it and
+published over the same URL.
 
 There is no scheduled workflow. An earlier version ran the pipeline nightly from
 GitHub Actions; it was removed in favour of updating deliberately, which is also
@@ -271,16 +274,30 @@ one fewer place for an API key to live.
 ## 4. The app
 
 ```bash
-scripts/bundle_snack.sh
-python3 scripts/publish_snack.py
+python3 scripts/build_web.py
 ```
 
-That folds `app/src` into one file, publishes it as a Snack and prints a
-tap-to-open `exp://` link. See [`app/README.md`](app/README.md) for the details,
-including why the SDK version is the whole difficulty.
+That folds `data/` and `web/logos.json` into `web/top300.html`, one file with no
+external references of any kind, which is then published as a Claude Artifact
+and opened by URL on a phone or a desktop.
 
-Four screens — **Ranks**, **Watchlist**, **Ticker detail**, **Settings** — in a
-dark, minimal, industrial theme with a single acid-green accent.
+Everything is inlined because the artifact host's Content-Security-Policy blocks
+every outbound request — no data fetch, no logo CDN, no fonts. That is also why
+the logos are cached into the repo as base64 WebP rather than loaded from the
+issuer's CDN the way the original app loaded them. Logos come in two kinds and
+the tile has a mode for each: a transparent mark sits inset on the dark tile,
+while art baked onto its own background fills the tile edge to edge like an app
+icon. `fetch_logos.py` sorts them out by measuring the alpha channel.
+
+The app was previously an Expo Snack. Expo's own Snack runtime began returning
+`HTTP 429 — Monthly Updating Users exceeded` for hours at a time, which left
+every Snack in the world stuck on "Connecting…" before a line of app code ran,
+and no anonymous Snack link could be updated in place. The web edition owes
+Expo nothing and republishes over one stable URL.
+
+Three screens — **Ranks**, **Watchlist**, **Ticker detail** — in a dark,
+minimal, industrial theme with a single acid-green accent. Sort, open universe
+and watchlist persist in `localStorage`.
 
 **Ranks** heads with the universe itself as the control: tap the title to swap
 between the Top 300 and any sector. A table already visited is painted from
@@ -295,19 +312,17 @@ that list — a rank carried over from a table would put #4 of 300 beside #4 of
 100 as though they were comparable. If a star belongs to a table not loaded yet,
 the app pulls it in the background and says so.
 
-The watchlist, settings and every table opened are held in `AsyncStorage` on the
-phone. Fetching is cache-backed at both levels, so the app opens and stays
-usable with no signal.
+Every table is already in the page, so switching universes and opening a ticker
+are instant and the app works with no signal at all.
 
 ---
 
 ## 5. Adding a universe
 
-The app has no list of universes compiled into it — it reads `index.json`. So
-any table matching the schema above appears in the picker as soon as it is
-listed there: an industry, a theme, a personal basket. Point the app's data URL
-(Settings → Advanced) at any directory holding an `index.json` and its files,
-including a branch or a local server, and it will serve that instead.
+The app has no list of universes compiled into it — the build reads
+`index.json`. So any table matching the schema above appears in the picker as
+soon as it is listed there and the page is rebuilt: an industry, a theme, a
+personal basket.
 
 ---
 

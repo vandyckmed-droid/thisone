@@ -2,12 +2,12 @@
 """
 Fold data/ into web/index.template.html and write a single self-contained page.
 
-The web edition exists because the page is published as a Claude Artifact,
-whose Content-Security-Policy blocks every external request -- no fetch to
-raw.githubusercontent.com, no logo CDN, nothing. So unlike the Snack, which
-pulls data/ from `main` at runtime, this page carries its data inside itself:
-refreshing it means rebuilding the table, rerunning this script, and
-republishing the artifact.
+The page is published as a Claude Artifact, whose Content-Security-Policy
+blocks every external request -- no fetch to raw.githubusercontent.com, no
+logo CDN, nothing. So the page carries everything it shows: the tables from
+data/, and the logos from web/logos.json (run scripts/fetch_logos.py to fill
+that cache). Refreshing the app means rebuilding the table, rerunning this
+script, and republishing the artifact to the same URL.
 
 Usage:
     python3 scripts/build_web.py [output.html]   (default: web/top300.html)
@@ -20,6 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 TEMPLATE = ROOT / "web" / "index.template.html"
+LOGOS = ROOT / "web" / "logos.json"
 DATA = ROOT / "data"
 
 
@@ -42,18 +43,41 @@ def main() -> int:
     # "</script>" inside a string literal would end the inline script early.
     payload = payload.replace("</", "<\\/")
 
+    # Base64 WebP keyed by symbol, minus the ones that could never be fetched --
+    # a null would only be tested for at render time, and the page already draws
+    # a letter tile for any symbol the map does not carry.
+    opaque = []
+    if LOGOS.exists():
+        cache = json.loads(LOGOS.read_text())
+        logos = {k: v for k, v in cache["logos"].items() if v}
+        # Logos baked onto their own background fill the tile; transparent
+        # marks sit inset on it.
+        opaque = [s for s in cache.get("opaque", []) if s in logos]
+    else:
+        logos = {}
+        print(f"warning: no {LOGOS.relative_to(ROOT)} -- run scripts/fetch_logos.py "
+              f"or the page ships with letter tiles only", file=sys.stderr)
+
     built = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
 
     html = TEMPLATE.read_text()
-    for marker, value in (("/*__DATA__*/", payload), ("/*__BUILT__*/", json.dumps(built))):
+    for marker, value in (("/*__DATA__*/", payload),
+                          ("/*__LOGOS__*/", json.dumps(logos, separators=(",", ":"))),
+                          ("/*__OPAQUE__*/", json.dumps(opaque, separators=(",", ":"))),
+                          ("/*__BUILT__*/", json.dumps(built))):
         if marker not in html:
             print(f"{marker} missing from {TEMPLATE}", file=sys.stderr)
             return 1
         html = html.replace(marker, value, 1)
 
     out.write_text(html)
-    print(f"Wrote {out} ({out.stat().st_size:,} bytes, "
-          f"{len(tables)} universes, data date {tables['all']['dataDate']})")
+    print(f"Wrote {out} ({out.stat().st_size / 1024 / 1024:.1f}MB, "
+          f"{len(tables)} universes, {len(logos)} logos, "
+          f"data date {tables['all']['dataDate']})")
+    # The artifact host rejects anything over 16MB, and the failure arrives at
+    # publish time rather than here.
+    if out.stat().st_size > 15 * 1024 * 1024:
+        print("warning: within 1MB of the 16MB artifact limit", file=sys.stderr)
     return 0
 
 

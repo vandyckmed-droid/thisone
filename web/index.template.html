@@ -143,7 +143,12 @@
     width: 30px; height: 30px; border-radius: 7px; background: var(--surface-hi);
     border: 1px solid var(--line); display: flex; align-items: center; justify-content: center;
     color: var(--dim); font-family: var(--mono); font-size: 12px; margin-right: 11px; flex-shrink: 0;
+    overflow: hidden;
   }
+  .tile img { width: 22px; height: 22px; object-fit: contain; }
+  /* Art with its own background fills the tile; the radius does the clipping. */
+  .tile.full { background: none; border-color: transparent; }
+  .tile.full img { width: 100%; height: 100%; object-fit: cover; }
   .identity { flex: 1; min-width: 0; padding-right: 8px; text-align: left; }
   .sym { display: block; color: var(--text); font-family: var(--mono); font-size: 13px; letter-spacing: 0.5px; }
   .nm { display: block; color: var(--faint); font-size: 11px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -214,7 +219,11 @@
     width: 46px; height: 46px; border-radius: 9px; background: var(--surface-hi);
     border: 1px solid var(--line); display: flex; align-items: center; justify-content: center;
     color: var(--dim); font-family: var(--mono); font-size: 18px; margin-right: 13px; flex-shrink: 0;
+    overflow: hidden;
   }
+  .t-tile img { width: 34px; height: 34px; object-fit: contain; }
+  .t-tile.full { background: none; border-color: transparent; }
+  .t-tile.full img { width: 100%; height: 100%; object-fit: cover; }
   .t-symbol { color: var(--text); font-family: var(--mono); font-size: 26px; letter-spacing: 2px; }
   .t-name { color: var(--dim); font-size: 13px; margin-top: 4px; }
   .t-meta { color: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: 0.6px; margin-top: 11px; text-transform: uppercase; }
@@ -356,7 +365,25 @@
    cannot fetch, so this file IS the snapshot. Regenerate + republish to
    refresh it. */
 const DATA = /*__DATA__*/;
+/* Base64 WebP by symbol, baked in by scripts/fetch_logos.py. The artifact CSP
+   blocks the logo CDN, so a logo either lives in this file or is a letter. */
+const LOGOS = /*__LOGOS__*/;
+/* Symbols whose art carries its own opaque background — see fetch_logos.py. */
+const OPAQUE = new Set(/*__OPAQUE__*/);
 const BUILT = /*__BUILT__*/;
+
+/* Issuers supply two incompatible kinds of art, so the tile has two modes: a
+   transparent mark sits inset on the dark surface, while one baked onto its
+   own background fills the tile edge to edge and is clipped by its radius —
+   an app icon rather than a bright hole punched through the list. A symbol
+   with no logo at all keeps its letter. */
+function logoHtml(symbol, cls) {
+  const b64 = LOGOS[symbol];
+  if (!b64) return `<span class="${cls}" aria-hidden="true">${esc(symbol.slice(0, 1))}</span>`;
+  const full = OPAQUE.has(symbol) ? ' full' : '';
+  return `<span class="${cls}${full}" aria-hidden="true">` +
+    `<img src="data:image/webp;base64,${b64}" alt="" loading="lazy" decoding="async"></span>`;
+}
 
 /* ============================================================ ported model
    Direct ports of app/src/data.js and theme.js — same names, same semantics,
@@ -558,7 +585,7 @@ function rowHtml(t, position, sort, starred) {
   return `<button class="row${starred ? ' starred' : ''}" data-sym="${esc(t.symbol)}" ` +
     `aria-label="${esc(t.symbol)}, ${esc(t.name)}. ${fmtPrice(t.price)}, ${fmtPct(t.changePct)} today.">` +
     `<span class="pos">${position === null || position === undefined ? '—' : position}</span>` +
-    `<span class="tile" aria-hidden="true">${esc(t.symbol.slice(0, 1))}</span>` +
+    logoHtml(t.symbol, 'tile') +
     `<span class="identity"><span class="sym">${esc(t.symbol)}</span><span class="nm">${esc(t.name)}</span></span>` +
     sparkSvg(t.spark, t.sparkChange) +
     `<span class="nums"><span class="price">${fmtPrice(t.price)}</span>` +
@@ -701,7 +728,7 @@ function renderTicker() {
         ${starred ? '★ WATCHING' : '☆ WATCH'}</button>
     </div>
     <div class="t-identity">
-      <div class="t-tile" aria-hidden="true">${esc(symbol.slice(0, 1))}</div>
+      ${logoHtml(symbol, 't-tile')}
       <div><div class="t-symbol">${esc(symbol)}</div><div class="t-name">${esc(t.name)}</div></div>
     </div>
     <div class="t-meta">${esc(t.sector)}${t.industry ? ` · ${esc(t.industry)}` : ''} · ${esc(t.exchange)}</div>

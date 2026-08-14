@@ -1,81 +1,88 @@
 # Working agreement
 
-## Deliver to a tap, every time
+## Deliver to a link, every time
 
 Feedback is not addressed when the code is fixed, or committed, or merged. It is
-addressed when there is a link in the chat that opens the running app on the
-phone.
+addressed when there is a link in the chat that opens the running app.
 
-So any change to `app/` runs all the way through:
+So any change to `web/` runs all the way through:
 
 ```bash
-scripts/bundle_snack.sh          # fold app/src into the single-file bundle
-python3 scripts/publish_snack.py # save it as a Snack, print the tap link
+python3 scripts/fetch_logos.py   # only when the universe gained new symbols
+python3 scripts/build_web.py     # fold data/ + logos into a single-file page
+                                 # then publish web/top300.html as an Artifact,
+                                 # to the SAME url as the standing link below
 git add -A && git commit && git push
 ```
 
-then the reply ends with the fresh **Tap link** (`exp://…`), with the web link
-(`https://snack.expo.dev/<id>`) beside it as the fallback for anywhere a custom
-scheme is not clickable.
+then the reply ends with that link.
 
-Do not hand back a QR code to scan, a file tree to paste into Snack, or a
-"regenerate it with this command". Run the command and paste the result.
+Do not hand back a file to open locally, a "rebuild it with this command", or a
+new artifact url. Run the build, republish over the existing url, paste it.
 
-**Every reply ends with a tap link — no exceptions, including replies that
-changed nothing.** Which link depends on whether the app moved:
-
-| Did this reply change `app/`? | Link to end with |
-| --- | --- |
-| Yes | Publish a new Snack and use that; update the standing link below |
-| No | Repeat the standing link verbatim |
-
-If `publish_snack.py` reports the runtime unreachable, the `exp://` link cannot
-open however good the bundle is. Hand over the web player link instead, and say
-plainly that Expo Go is the part that is broken.
+**Every reply ends with the app link — no exceptions, including replies that
+changed nothing.** If the app moved, republish first; if it did not, repeat the
+standing link verbatim.
 
 ### Standing link
-
-```
-exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=-OKwkj7qndiRFN1Y3vLng
-https://snack.expo.dev/-OKwkj7qndiRFN1Y3vLng
-https://snack.expo.dev/-OKwkj7qndiRFN1Y3vLng?platform=web   <- works while Expo Go's runtime is 429ing
-```
-
-Keep this block current — it is the answer to "what do I tap right now".
-
-The split exists because **an anonymous Snack is immutable**. Passing an
-existing id to the save endpoint mints a *new* id and leaves the original
-untouched, so there is no way to update a published link in place without an
-Expo account. Every app change therefore burns a new id, and if Expo Go scopes
-`AsyncStorage` per Snack rather than per runtime, a new id costs the user their
-watchlist. That is unverified either way, so do not spend ids casually:
-republish when the app actually changed, and otherwise repeat the standing link.
-
-A Snack is a **frozen copy** of the bundle at save time. Editing `app/src/` does
-nothing to an already-published link, so republishing is not optional after an
-app change — the old link would keep serving the old bug. Data is different:
-`data/` is fetched at runtime from `main`, so a rebuilt table reaches an
-already-published Snack on its own and only app changes need a republish.
-
-## Web edition
-
-The app also exists as a single-file web page, published as a Claude Artifact —
-the Expo-independent fallback for when Expo Go or Snack is broken, and a
-first-class way to use it on a desktop:
 
 ```
 https://claude.ai/code/artifact/b0309d40-75ba-4dd8-83ec-9953aed70963
 ```
 
-`web/index.template.html` is the app (a hand-ported mirror of `app/src`, same
-theme, same model code) and `scripts/build_web.py` folds `data/` into it. The
-artifact's CSP blocks every external request, so the page cannot fetch from
-GitHub the way the Snack does — the data is baked in at build time, and logos
-are letter tiles. That means a data refresh does NOT reach this page on its
-own: rebuild with `python3 scripts/build_web.py`, then republish the artifact
-**to the same URL** (pass the URL above as `url` when publishing from a new
-session; republishing the same file path within a session updates in place).
-Changes to `app/src` that touch model logic belong in the template too.
+Unlike the Snack ids this replaced, **this url is stable**: republishing the same
+file path within a session updates it in place, and from a new session passing it
+as `url` does the same. Never publish without that `url` — it mints a second
+artifact and strands the one people already have. The artifact is private to the
+account owner until they share it from the page's own share menu.
+
+## The page carries everything it shows
+
+The artifact's Content-Security-Policy blocks every external request — no fetch
+to GitHub, no logo CDN, no fonts. So nothing is loaded at view time; it is all
+baked in at build time. Two consequences worth remembering:
+
+- **A data rebuild does not reach the published page on its own.** Regenerating
+  `data/` changes nothing until `build_web.py` runs and the artifact is
+  republished. There is no runtime fetch to pick it up.
+- **Logos live in `web/logos.json`**, base64 WebP keyed by symbol, committed.
+  `fetch_logos.py` fills it, skipping symbols already cached, so it only costs
+  network on genuinely new names — rerun it after a universe change, not on
+  every build.
+
+Logos come in two incompatible kinds and the tile has a mode for each: a
+transparent mark sits inset on the dark tile, while art baked onto its own
+opaque background fills the tile edge to edge and is clipped by its radius.
+Classifying them by hand is not necessary — `fetch_logos.py` measures the alpha
+channel and writes the `opaque` list itself, over the cache, at no network cost.
+
+Keep an eye on the total: the artifact host rejects anything over 16MB, and
+`build_web.py` warns within 1MB of it. Today's page is ~8.8MB, roughly two
+thirds data and one third logos.
+
+## Why there is no Snack any more
+
+The app shipped as an Expo Snack until Expo's own runtime project — the EAS
+Update endpoint every `exp://` link points at, which Expo Go fetches before
+running a line of our code — began returning
+
+```
+HTTP 429: The number of Monthly Updating Users has exceeded the Free tier's
+quota for this account.
+```
+
+for hours at a stretch, breaking every Snack in the world at once and leaving
+the phone on "Connecting…" with no error and no clue. Nothing in this repo could
+fix it, and no amount of care over SDK versions or dependency pinning mattered
+while it was down.
+
+An anonymous Snack was also immutable, so every app change minted a new id and a
+new link, and possibly cost the user their watchlist along with it.
+
+The web edition owes Expo nothing, updates in place, and is the delivery channel
+now. `app/src/` is the retired React Native original, kept because
+`web/index.template.html` is a hand port of it and the model code is worth
+diffing against; it is no longer built or published.
 
 ## Merge authority
 
@@ -84,101 +91,24 @@ The same goes for the rest of repo maintenance: branches, follow-up PRs,
 regenerating artifacts. Raise something only when it genuinely cannot be done
 without the account owner.
 
-Nothing currently needs the account owner. The nightly Actions refresh is gone —
-data is rebuilt by running `scripts/build_snapshot.py` here and committing the
-result — so no repository secret has to exist for the pipeline to run.
-
-## Snack publishing, the part that bites
-
-The SDK version is the whole difficulty, and it fails in two different ways.
-
-**It can fail silently on Snack's side.** Saving against an SDK with no Snack
-runtime still returns an id and still loads a page, but the deep link comes
-back without its `snack=` parameter and the phone has nothing to open.
-
-**It can also bind on Snack and still be wrong for the phone.** An SDK newer
-than the installed Expo Go produces a link that opens Expo Go and then dies on
-"Project is incompatible with this version of Expo Go". This is the one that
-actually shipped a broken link: SDK 55 bound perfectly server-side and was
-useless on the device.
-
-So **"newest version that binds" is the wrong target.** The right one is the
-runtime Snack itself falls back to, which is what its Expo Go integration ships
-against. Only a *saved* Snack's page renders that value, so `publish_snack.py`
-saves a probe against an impossible SDK, reads the fallback runtime off its
-page, and publishes against exactly that — then asserts the link it hands back
-carries both `snack=<id>` and the runtime it asked for. Do not replace that
-probe with the versions API; that API lists SDKs Expo Go cannot run.
-
-Never hand over a link that has not passed both assertions.
-
-**Import a native package from exactly one module.** The bundler emits one
-import statement per importing module, and Snack's runtime evaluates the
-package once for each of them. `react-native-svg` registers native views at
-module scope, so a second evaluation throws *"Tried to register two views with
-the same name RNSVGCircle"* — after the app has already started rendering. Two
-importers happened to survive; a third did not. `app/src/components/svg.js`
-re-exports the package and everything draws through it, so the bundle contains
-one import however many components use it. Check with:
-
-```bash
-grep -c 'from *"react-native-svg"' app/snack/App.js   # must print 1
-```
-
-The `*` matters: the bundle is minified, so the space before the quote is gone
-and the spaced pattern matches nothing — which looks exactly like passing.
-
-**Check the runtime is actually being served.** Every `exp://` link points at
-`u.expo.dev/933fd9c0-…`, which is Expo's *own* EAS Update project holding the
-Snack runtime. Expo Go fetches that before it runs a line of our code, so when
-it fails the phone shows **"Connecting…" and nothing else** — no error, no
-timeout, no clue — while the bundle, the SDK and the dependencies all look
-perfect. It has already returned
-
-```
-HTTP 429: The number of Monthly Updating Users has exceeded the Free tier's
-quota for this account.
-```
-
-for hours at a stretch, on every SDK, breaking every Snack in the world at once.
-Nothing in this repo fixes it. `publish_snack.py` makes the same request the
-phone makes and refuses to call a publish successful when it fails, so this is
-never again mistaken for a bug in the app. Check by hand with:
-
-```bash
-curl -s -H 'expo-runtime-version: exposdk:54.0.0' -H 'expo-channel-name: production' \
-     -H 'expo-platform: ios' https://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824
-```
-
-When it is down, the **web player still works** — it does not touch that
-endpoint — so hand over `https://snack.expo.dev/<id>?platform=web` and say why.
-
-**Pin dependencies to the SDK, never `*`.** `react-native-svg`, AsyncStorage and
-`expo-haptics` all ship inside Expo Go, but a `*` version spec does not match
-the bundled copy, so Snack hands the package to Snackager to build from npm
-instead — and that fails on the device with "Unable to fetch module
-react-native-svg@* for ios" after the app has already started rendering.
-`publish_snack.py` reads the real versions from
-`exp.host/--/api/v2/sdks/<sdk>/native-modules` and refuses to publish if any
-dependency has no version published for that SDK. Snackager is unreachable from
-this environment, so a bad pin cannot be caught here — it surfaces on the
-phone.
+Nothing currently needs the account owner. Data is rebuilt by running
+`scripts/build_snapshot.py` here and committing the result, so no repository
+secret has to exist for the pipeline to run.
 
 ## Repository shape
 
 | Path | What it is |
 | --- | --- |
 | `scripts/build_snapshot.py` | The pipeline: universe, prices, metrics, validation, atomic write |
-| `scripts/bundle_snack.sh` | Folds `app/` into `app/snack/App.js` |
-| `scripts/publish_snack.py` | Saves that bundle as a Snack, prints the tap link |
-| `scripts/make_snack_url.py` | Multi-file Snack link, for editing the modular project |
-| `scripts/build_web.py` | Folds `data/` into the web edition's template |
-| `web/index.template.html` | The web edition — a hand-ported mirror of `app/src` |
-| `app/src/` | The real app — **edit here** |
-| `app/snack/App.js` | Generated bundle — never edit |
+| `scripts/fetch_logos.py` | Caches every company logo into `web/logos.json` |
+| `scripts/build_web.py` | Folds `data/` and the logos into one self-contained page |
+| `web/index.template.html` | **The app — edit here** |
+| `web/logos.json` | Base64 WebP logos by symbol, plus which are opaque |
+| `web/top300.html` | Generated page — never edit, never commit |
 | `data/index.json` | The list of universes — the first file the app reads |
 | `data/snapshot.json` | The Top 300 |
 | `data/sectors/*.json` | The top 100 in each sector |
+| `app/src/` | The retired React Native original, kept for reference |
 
 Two invariants worth not breaking:
 
