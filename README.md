@@ -70,44 +70,66 @@ The universe is then built in two parts.
 
 The **core** is simply the largest `TOP_N` companies by market cap.
 
-The **expansion** is the algorithm below, which exists because taking the next
-`N` by market cap would just deepen whichever sectors are already largest —
-another dozen technology names before a second utility.
+The **expansion** is chosen under a sector **collar** — a ceiling and a floor,
+both expressed as a share of the finished universe:
 
 ```
-1. Sort the unselected candidates from largest to smallest market cap.
-2. Look at the next five.
-3. Select the one from the least-represented sector.
-4. Break ties by choosing the largest market cap.
-5. Update the sector counts and repeat.
+SECTOR_CAP_PCT    = 20    no sector may hold more than 20% of the table
+SECTOR_FLOOR_PCT  =  4    no sector present may hold less than 4%
 ```
 
-Sector counts start from whatever the core already contains, so the expansion
-balances against the real starting position rather than from zero.
+Selection then runs in three passes: lift every sector to the floor, fill the
+rest in plain market-cap order while no sector exceeds the cap, and — only if
+the cap left the table short — relax it rather than publish fewer names than
+asked for. That last case is logged loudly, because a breached guarantee should
+never be quiet; it means the screen needs widening, not the cap loosening.
 
-**The lookahead is the whole character of it.** Choosing purely by smallest
-sector would trawl the entire tail for one more utility however far down it
-sat. Restricting the choice to the next five means a company still has to be
-roughly next in line by size to be picked at all, so the balancing happens
-between near-equals. The flip side is that it cannot reach a starved sector
-sitting forty places down, and a run of six same-sector names in a row will be
-taken in full.
+The point of percentages is that the same two numbers mean the same thing at
+any size:
 
-That makes the effect deliberately mild. Growing 100 → 200 at the default
-lookahead of 5 changes only four names versus pure market cap:
+| Universe | Cap | Floor |
+| --- | --- | --- |
+| 25 | 5 | 1 |
+| 100 | 20 | 4 |
+| 200 | 40 | 8 |
+| 1000 | 200 | 40 |
+| 5000 | 1000 | 200 |
 
-| Sector | Pure market cap | Lookahead 5 | Lookahead 25 |
-| --- | --- | --- | --- |
-| Technology | 46 | 42 | 32 |
-| Financial Services | 33 | 34 | 32 |
-| Industrials | 31 | 31 | 32 |
-| Energy | 13 | 13 | 19 |
-| Utilities | 6 | 6 | 8 |
-| *largest sector share* | *23%* | *21%* | *16%* |
-| *names changed* | *—* | *4* | *15* |
+Percentages can also describe an impossible table, so the counts are made
+feasible before use. Three sectors cannot fill 200 names under a 20% ceiling,
+so the ceiling rises to 67; forty sectors cannot each be guaranteed 4% of 200,
+so the floor drops to 5. The ceiling is fixed first, because a table that
+cannot be filled is a worse failure than one less balanced than requested.
 
-Widen `LOOKAHEAD` if you want the balancing to bite harder; it is an
-environment variable precisely so this is a dial rather than a rewrite.
+At 200 the collar costs six names and 0.1% of the market cap it would otherwise
+cover:
+
+| | Pure market cap | Collar 20/4 |
+| --- | --- | --- |
+| Technology | 46 | **40** |
+| Utilities | 6 | **8** |
+| Real Estate | 6 | **8** |
+| Basic Materials | 6 | **8** |
+| Largest sector | 23% | **20%** |
+| Smallest sector | 3% | **4%** |
+| Market cap covered | 100% | 99.9% |
+
+Every name it drops sits at #167 or below — the tail of the technology block,
+not its household names — and every name it adds is within about 38 places of
+the cutoff.
+
+### Why not a lookahead
+
+An earlier version walked the candidates in market-cap order, looked at the next
+five, and took the one from the least-represented sector. It is still in the
+script and still selectable with `SELECTION=lookahead`, but the collar replaced
+it as the default for one reason: **the collar states a guarantee, the lookahead
+describes a procedure.** "No sector above 20%, none below 4%" can be checked
+against the output. "Lookahead 5" can only be measured — and measuring it showed
+it changed four names out of two hundred, which is far less than the name
+suggests. Its whole effect is bounded by how far it can see: a starved sector
+forty places down is unreachable, and a run of six same-sector names is taken in
+full.
 
 ### Growing the universe
 
@@ -116,8 +138,10 @@ Nothing structural has to change to get bigger:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `TOP_N` | `100` | The market-cap core |
-| `BALANCED_N` | `100` | Names added by the algorithm above |
-| `LOOKAHEAD` | `5` | How many candidates it weighs at a time |
+| `BALANCED_N` | `100` | Names added under the collar |
+| `SECTOR_CAP_PCT` | `20` | Most of the table any one sector may hold |
+| `SECTOR_FLOOR_PCT` | `4` | Least any sector present may hold |
+| `SELECTION` | `collar` | Or `lookahead` for the earlier method |
 
 `BALANCED_N=0` gives a pure market-cap table of `TOP_N`. The candidate pool and
 the reserve size themselves off the target, so raising either number widens the
@@ -168,8 +192,10 @@ previous snapshot left untouched                     exit 1, snapshot unchanged
 | --- | --- | --- |
 | `FMP_API_KEY` | — | Required. `API_KEY` also works. |
 | `TOP_N` | `100` | Size of the market-cap core |
-| `BALANCED_N` | `100` | Names added by the sector-balancing algorithm |
-| `LOOKAHEAD` | `5` | Candidates the balancer weighs at a time |
+| `BALANCED_N` | `100` | Names added under the sector collar |
+| `SECTOR_CAP_PCT` | `20` | Ceiling per sector, as a share of the universe |
+| `SECTOR_FLOOR_PCT` | `4` | Floor per sector, as a share of the universe |
+| `SELECTION` | `collar` | Or `lookahead` for the earlier method |
 | `HISTORY_DAYS` | `760` | Calendar days of history requested |
 | `MAX_WORKERS` | `8` | Concurrent API requests |
 | `OUTPUT` | `data/snapshot.json` | Where to write |
@@ -187,7 +213,9 @@ only a bare array of closes rather than repeating 523 date strings.
   "generatedAt": "2026-08-14T00:04:30+00:00",
   "dataDate": "2026-08-13",
   "universeSize": 200,
-  "selection": { "core": 100, "balanced": 100, "lookahead": 5 },
+  "selection": { "method": "collar", "core": 100, "balanced": 100,
+                 "sectorCapPct": 20, "sectorFloorPct": 4,
+                 "sectorCap": 40, "sectorFloor": 8 },
   "sessions": 523,
   "dates": ["2024-07-15", "..."],          // shared calendar
   "tickers": [
