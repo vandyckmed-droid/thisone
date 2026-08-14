@@ -29,11 +29,16 @@ changed nothing.** Which link depends on whether the app moved:
 | Yes | Publish a new Snack and use that; update the standing link below |
 | No | Repeat the standing link verbatim |
 
+If `publish_snack.py` reports the runtime unreachable, the `exp://` link cannot
+open however good the bundle is. Hand over the web player link instead, and say
+plainly that Expo Go is the part that is broken.
+
 ### Standing link
 
 ```
 exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=ItepA5YhdjXzAUwMHEXB9
 https://snack.expo.dev/ItepA5YhdjXzAUwMHEXB9
+https://snack.expo.dev/ItepA5YhdjXzAUwMHEXB9?platform=web   <- works while Expo Go's runtime is 429ing
 ```
 
 Keep this block current — it is the answer to "what do I tap right now".
@@ -102,6 +107,31 @@ grep -c 'from *"react-native-svg"' app/snack/App.js   # must print 1
 
 The `*` matters: the bundle is minified, so the space before the quote is gone
 and the spaced pattern matches nothing — which looks exactly like passing.
+
+**Check the runtime is actually being served.** Every `exp://` link points at
+`u.expo.dev/933fd9c0-…`, which is Expo's *own* EAS Update project holding the
+Snack runtime. Expo Go fetches that before it runs a line of our code, so when
+it fails the phone shows **"Connecting…" and nothing else** — no error, no
+timeout, no clue — while the bundle, the SDK and the dependencies all look
+perfect. It has already returned
+
+```
+HTTP 429: The number of Monthly Updating Users has exceeded the Free tier's
+quota for this account.
+```
+
+for hours at a stretch, on every SDK, breaking every Snack in the world at once.
+Nothing in this repo fixes it. `publish_snack.py` makes the same request the
+phone makes and refuses to call a publish successful when it fails, so this is
+never again mistaken for a bug in the app. Check by hand with:
+
+```bash
+curl -s -H 'expo-runtime-version: exposdk:54.0.0' -H 'expo-channel-name: production' \
+     -H 'expo-platform: ios' https://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824
+```
+
+When it is down, the **web player still works** — it does not touch that
+endpoint — so hand over `https://snack.expo.dev/<id>?platform=web` and say why.
 
 **Pin dependencies to the SDK, never `*`.** `react-native-svg`, AsyncStorage and
 `expo-haptics` all ship inside Expo Go, but a `*` version spec does not match

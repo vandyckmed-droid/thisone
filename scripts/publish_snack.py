@@ -44,6 +44,13 @@ SNACK_PAGE = "https://snack.expo.dev/{id}"
 NATIVE_MODULES = "https://exp.host/--/api/v2/sdks/{sdk}/native-modules"
 BUNDLE = "app/snack/App.js"
 
+# The Snack runtime itself is an EAS Update project, and every exp:// link we
+# hand out is a request to it. Expo Go fetches this before it runs a line of our
+# code, so when it fails the phone shows "Connecting..." and nothing else --
+# no error, no timeout, no clue. Ask it the same question here instead.
+RUNTIME_PROJECT = "933fd9c0-1666-11e7-afca-d980795c5824"
+RUNTIME_MANIFEST = f"https://u.expo.dev/{RUNTIME_PROJECT}"
+
 DEPENDENCIES = ["react-native-svg", "@react-native-async-storage/async-storage", "expo-haptics"]
 NAME = "Top 300"
 DESCRIPTION = "Top 300 US stocks and the top 100 per sector, ranked"
@@ -55,6 +62,35 @@ def get(url: str, timeout: int = 45) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8", "replace")
+
+
+def runtime_available(sdk: str) -> tuple[bool, str]:
+    """Can a phone actually fetch the Snack runtime for this SDK right now?
+
+    This is the request Expo Go makes the instant someone taps the link, and it
+    is entirely outside our control: the runtime belongs to Expo's own EAS
+    project, so a quota or an outage there makes every Snack in the world
+    unopenable while the bundle, the SDK and the dependencies all look perfect.
+    """
+    req = urllib.request.Request(
+        RUNTIME_MANIFEST,
+        headers={
+            "User-Agent": "Expo/2.33.17 CFNetwork/1568.100.1 Darwin/24.0.0",
+            "expo-runtime-version": f"exposdk:{sdk}",
+            "expo-channel-name": "production",
+            "expo-platform": "ios",
+            "expo-protocol-version": "1",
+            "accept": "multipart/mixed",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            return resp.status == 200, f"HTTP {resp.status}"
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", "replace").strip()
+        return False, f"HTTP {exc.code}: {body[:200]}"
+    except Exception as exc:  # noqa: BLE001 - the reason belongs in the report
+        return False, str(exc)
 
 
 # An SDK far beyond anything Expo will ship, so the probe is guaranteed not to
@@ -203,6 +239,23 @@ def main() -> int:
     print(f"\n  Snack id : {snack_id}")
     print(f"  Tap link : {link}")
     print(f"  Web link : {SNACK_PAGE.format(id=snack_id)}")
+
+    # Last, because it is the only check whose answer can change minute to
+    # minute and has nothing to do with what was just published.
+    ok, detail = runtime_available(sdk)
+    if not ok:
+        print(
+            f"\n  !! Expo Go cannot fetch the SDK {sdk} Snack runtime: {detail}\n"
+            f"     The tap link above will sit on \"Connecting...\" forever -- the phone\n"
+            f"     never gets far enough to run, or complain about, any of this code.\n"
+            f"     This is Expo's own runtime project, so nothing in this repo fixes it.\n"
+            f"     Until it recovers, hand over the web player instead, which does not\n"
+            f"     touch that endpoint:\n"
+            f"       {SNACK_PAGE.format(id=snack_id)}?platform=web",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"  Runtime  : reachable ({detail})")
     return 0
 
 
