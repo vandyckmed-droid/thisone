@@ -186,7 +186,7 @@ var styles = StyleSheet.create({
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // app/src/source.js
-var DEFAULT_SOURCE = "https://raw.githubusercontent.com/vandyckmed-droid/thisone/refs/heads/claude/financial-modeling-top-100-9g4jp3/data/snapshot.json";
+var DEFAULT_SOURCE = "https://raw.githubusercontent.com/vandyckmed-droid/thisone/main/data/snapshot.json";
 
 // app/src/storage.js
 var K = {
