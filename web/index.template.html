@@ -745,11 +745,17 @@ function changeOver(points) {
   return (last / first - 1) * 100;
 }
 
+/* A whole-market table already carries its size in its title — "Top 300",
+   "Next 300" — so naming it is enough. Saying "TOP 300" for every such table
+   would call the second band a top, which it is the opposite of. */
 const universeLabel = (t) => (t.scope === 'sector'
-  ? `${t.title.toUpperCase()} ${t.universeSize}` : `TOP ${t.universeSize}`);
-const describeUniverse = (t) => (t.scope === 'sector'
-  ? `${t.universeSize} LARGEST ${t.title.toUpperCase()} COMPANIES`
-  : `${t.universeSize} LARGEST US COMPANIES`);
+  ? `${t.title.toUpperCase()} ${t.universeSize}` : t.title.toUpperCase());
+/* The pipeline writes the one-line description, because only it knows whether
+   a table is a plain "largest N" or a rank band. */
+const describeUniverse = (t) => (t.blurb ? t.blurb.toUpperCase()
+  : t.scope === 'sector'
+    ? `${t.universeSize} LARGEST ${t.title.toUpperCase()} COMPANIES`
+    : `${t.universeSize} LARGEST US COMPANIES`);
 
 const fmtCap = (n) => {
   if (!n && n !== 0) return '—';

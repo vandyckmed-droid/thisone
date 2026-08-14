@@ -24,6 +24,7 @@ Environment
 -----------
 FMP_API_KEY / API_KEY   required
 TOP_N                   size of the overall table (default 300)
+NEXT_N                  size of the band published below it (default 300)
 SECTOR_N                size of each sector table (default 100)
 MIN_MARKET_CAP          screen floor (default 250M -- low enough that the
                         smaller sectors can reach SECTOR_N)
@@ -59,6 +60,11 @@ API_KEY = os.environ.get("FMP_API_KEY") or os.environ.get("API_KEY") or ""
 # largest SECTOR_N within each sector. No balancing, no quotas -- a sector file
 # already is the sector, so nothing needs spreading.
 TOP_N = int(os.environ.get("TOP_N", "300"))
+# The band below the overall table, published as its own universe. Same shape,
+# same metrics, ranked among itself -- a company is #1 of the next 300 rather
+# than #301 of six hundred, because the field it is measured against is what a
+# placing means.
+NEXT_N = int(os.environ.get("NEXT_N", "300"))
 SECTOR_N = int(os.environ.get("SECTOR_N", "100"))
 HISTORY_DAYS = int(os.environ.get("HISTORY_DAYS", "850"))
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "4"))
@@ -67,6 +73,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.environ.get("DATA_DIR") or os.path.join(REPO_ROOT, "data")
 OUTPUT_PATH = os.environ.get("OUTPUT") or os.path.join(DATA_DIR, "snapshot.json")
 SECTOR_DIR = os.path.join(DATA_DIR, "sectors")
+NEXT_FILE = "next300.json"
 
 # Reaching a hundred names in the smaller sectors means screening well below
 # mega-cap: at a $5B floor only five sectors have a hundred to give.
@@ -287,7 +294,7 @@ def wanted(universe: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rather than once per file it appears in.
     """
     chosen: dict[str, dict[str, Any]] = {}
-    for entry in universe[:TOP_N]:
+    for entry in universe[:TOP_N + NEXT_N]:
         chosen[entry["symbol"]] = entry
 
     per_sector: dict[str, int] = {}
@@ -606,7 +613,8 @@ def slugify(sector: str) -> str:
 
 
 def assemble(tickers: list[dict[str, Any]], calendar: list[str],
-             title: str, scope: str, benchmarks: dict[str, Any]) -> dict[str, Any]:
+             title: str, scope: str, benchmarks: dict[str, Any],
+             blurb: str | None = None) -> dict[str, Any]:
     """One published table: ranks are computed within it, not inherited.
 
     A sector file ranks its companies against each other, which is the only
@@ -618,6 +626,9 @@ def assemble(tickers: list[dict[str, Any]], calendar: list[str],
     return {
         "schema": 3,
         "generatedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        # One line saying what this table holds. Written here because only the
+        # pipeline knows a table is a rank band rather than a plain "largest N".
+        "blurb": blurb or f"{len(rows)} largest {'' if scope == 'all' else title + ' '}companies".replace("  ", " "),
         "dataDate": calendar[-1] if calendar else None,
         "source": "Financial Modeling Prep",
         "title": title,
@@ -632,8 +643,9 @@ def assemble(tickers: list[dict[str, Any]], calendar: list[str],
     }
 
 
-def build_tables() -> tuple[dict[str, Any], dict[str, dict[str, Any]], list[str]]:
-    """The overall table, one table per sector, and the shared calendar."""
+def build_tables() -> tuple[dict[str, Any], dict[str, Any],
+                            dict[str, dict[str, Any]], list[str]]:
+    """The overall table, the band below it, one table per sector, and the calendar."""
     universe = build_universe()
     shortlist = wanted(universe)
     histories = load_history([e["symbol"] for e in shortlist])
@@ -666,7 +678,18 @@ def build_tables() -> tuple[dict[str, Any], dict[str, dict[str, Any]], list[str]
         )
 
     overall = assemble(metrics[:TOP_N], calendar,
-                       f"Top {min(TOP_N, len(metrics))}", "all", benchmarks)
+                       f"Top {min(TOP_N, len(metrics))}", "all", benchmarks,
+                       blurb=f"{min(TOP_N, len(metrics))} largest US companies")
+
+    following = metrics[TOP_N:TOP_N + NEXT_N]
+    if len(following) < NEXT_N * 0.9:
+        raise PipelineError(
+            f"only {len(following)} companies below the top {TOP_N} have usable "
+            f"history, expected about {NEXT_N} -- refusing to publish a thin band"
+        )
+    upcoming = assemble(
+        following, calendar, f"Next {len(following)}", "all", benchmarks,
+        blurb=f"US companies ranked {TOP_N + 1} to {TOP_N + len(following)} by market cap")
 
     sectors: dict[str, dict[str, Any]] = {}
     for sector in sorted({t["sector"] for t in metrics}):
@@ -680,7 +703,7 @@ def build_tables() -> tuple[dict[str, Any], dict[str, dict[str, Any]], list[str]
         short = "" if table["universeSize"] >= SECTOR_N else "  (all available)"
         log(f"  {sector:<{widest}}  {table['universeSize']:>3}{short}")
 
-    return overall, sectors, calendar
+    return overall, upcoming, sectors, calendar
 
 
 def write_atomically(path: str, payload: dict[str, Any]) -> int:
@@ -702,7 +725,7 @@ def main() -> int:
     previous = read_previous(OUTPUT_PATH)
 
     try:
-        overall, sectors, calendar = build_tables()
+        overall, upcoming, sectors, calendar = build_tables()
     except PipelineError as exc:
         log(f"REFRESH FAILED: {exc}")
         log("previous files left untouched" if previous else "no previous files exist")
@@ -712,6 +735,9 @@ def main() -> int:
     # sector cannot leave the set half updated.
     problems: list[str] = []
     problems += [f"overall: {e}" for e in validate(overall, previous, TOP_N)]
+    # No previous-overlap check for the band: it sits at the boundary of the
+    # screen, so names crossing in and out of it is ordinary, not a red flag.
+    problems += [f"next: {e}" for e in validate(upcoming, None, upcoming["universeSize"])]
     for sector, table in sectors.items():
         problems += [f"{sector}: {e}" for e in validate(table, None, min(SECTOR_N, table["universeSize"]))]
 
@@ -723,6 +749,7 @@ def main() -> int:
         return 1
 
     total = write_atomically(OUTPUT_PATH, overall)
+    total += write_atomically(os.path.join(DATA_DIR, NEXT_FILE), upcoming)
     index = {
         "generatedAt": overall["generatedAt"],
         "dataDate": overall["dataDate"],
@@ -730,6 +757,8 @@ def main() -> int:
         "universes": [
             {"key": "all", "title": overall["title"], "scope": "all",
              "size": overall["universeSize"], "file": "snapshot.json"},
+            {"key": "next", "title": upcoming["title"], "scope": "all",
+             "size": upcoming["universeSize"], "file": NEXT_FILE},
         ],
     }
     for sector, table in sorted(sectors.items()):
@@ -742,7 +771,7 @@ def main() -> int:
 
     write_atomically(os.path.join(DATA_DIR, "index.json"), index)
 
-    log(f"wrote {1 + len(sectors)} tables plus an index, {total / 1024 / 1024:.1f} MB, "
+    log(f"wrote {2 + len(sectors)} tables plus an index, {total / 1024 / 1024:.1f} MB, "
         f"data date {overall['dataDate']}")
     return 0
 
