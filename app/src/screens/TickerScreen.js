@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 import PriceChart from '../components/PriceChart';
-import { Chip, SectionTitle, Stat } from '../components/UI';
+import { Chip, Disclosure, SectionTitle, Stat } from '../components/UI';
 import { RANGES, changeOver, seriesFor } from '../data';
 import { confirm, undo } from '../haptics';
 import { C, MONO, S, fmtCap, fmtNum, fmtPct, fmtPrice, fmtRank, tone } from '../theme';
@@ -67,10 +67,18 @@ export default function TickerScreen({ ticker, snapshot, starred, onBack, onTogg
       </Text>
 
       <View style={styles.priceBlock}>
-        <Text style={styles.price}>{fmtPrice(ticker.price)}</Text>
-        <Text style={[styles.change, { color: tone(ticker.changePct) }]}>
-          {ticker.change >= 0 ? '+' : ''}{fmtNum(ticker.change)} ({fmtPct(ticker.changePct)})
-        </Text>
+        <View>
+          <Text style={styles.price}>{fmtPrice(ticker.price)}</Text>
+          <Text style={[styles.change, { color: tone(ticker.changePct) }]}>
+            {ticker.change >= 0 ? '+' : ''}{fmtNum(ticker.change)} ({fmtPct(ticker.changePct)})
+          </Text>
+        </View>
+        {/* A size, not a ranking -- so it belongs with the company, not in a
+            section that is otherwise nothing but #n placings. */}
+        <View style={styles.capBlock}>
+          <Text style={styles.capLabel}>MARKET CAP</Text>
+          <Text style={styles.capValue}>{fmtCap(ticker.marketCap)}</Text>
+        </View>
       </View>
 
       <View style={styles.rangeRow}>
@@ -117,8 +125,36 @@ export default function TickerScreen({ ticker, snapshot, starred, onBack, onTogg
           color={ticker.maxDrawdown1y === null ? C.text : C.down}
         />
         <Stat label="RETURN/RISK" value={fmtNum(ticker.riskAdjusted1y, 2)} />
-        <Stat label="MOMENTUM SCORE" value={fmtNum(ticker.momentumScore, 0)} color={C.acid} />
       </View>
+
+      <SectionTitle>MOMENTUM</SectionTitle>
+      <View style={styles.grid}>
+        <Stat label="SCORE" value={fmtNum(ticker.momentumScore, 0)} color={C.acid} width="50%" />
+        <Stat
+          label={`RANK OF ${snapshot.universeSize}`}
+          value={fmtRank(ticker.ranks.momentum)}
+          width="50%"
+        />
+      </View>
+
+      <Disclosure label="HOW MOMENTUM WORKS ›">
+        <Text style={styles.prose}>
+          Four returns are measured for every company: 3, 6, 9 and 12 months. Each one stops a month
+          short of today rather than running up to the last close — very short-term moves tend to
+          reverse rather than persist, so the most recent month is skipped instead of counted.
+        </Text>
+        <Text style={styles.prose}>
+          This ticker is then ranked against the other {snapshot.universeSize - 1} on each of those
+          four windows, and the four placings are averaged and rescaled so 100 is the strongest of
+          the {snapshot.universeSize}. A high score means winning across every timeframe, not
+          spiking in one.
+        </Text>
+        <Text style={styles.prose}>
+          It stays blank until a company has traded about 13 months — the 12-month window plus the
+          skipped one. Scoring on whichever windows happened to exist would be a different measure
+          wearing the same name.
+        </Text>
+      </Disclosure>
 
       <SectionTitle>RANK IN TOP {snapshot.universeSize}</SectionTitle>
       <View style={styles.grid}>
@@ -127,21 +163,14 @@ export default function TickerScreen({ ticker, snapshot, starred, onBack, onTogg
         <Stat label="3 MONTH" value={fmtRank(ticker.ranks.return_3m)} />
         <Stat label="6 MONTH" value={fmtRank(ticker.ranks.return_6m)} />
         <Stat label="1 YEAR" value={fmtRank(ticker.ranks.return_1y)} />
-        <Stat label="MOMENTUM" value={fmtRank(ticker.ranks.momentum)} />
         <Stat label="RETURN/RISK" value={fmtRank(ticker.ranks.riskAdjusted)} />
         <Stat label="LOW VOL" value={fmtRank(ticker.ranks.volatility)} />
-        <Stat label="MKT CAP USD" value={fmtCap(ticker.marketCap)} />
       </View>
 
       <Text style={styles.footnote}>
-        Adjusted closes from {ticker.firstSession} to {ticker.asOf}. Volatility is annualised from
-        daily log returns; return/risk is the 1Y return divided by 1Y volatility. Momentum averages
-        this ticker's percentile across the 3, 6, 9 and 12 month returns, each measured to a month ago
-        rather than to today — very short-term moves tend to reverse rather than persist, so the most
-        recent month is skipped. It is scaled so 100 is the strongest of the {snapshot.universeSize}:
-        a read on consistency across timeframes rather than any one of them, and blank until a ticker
-        has the ~13 months of history all four windows need. Blank figures elsewhere mean the same
-        thing — not enough history to fill that window.
+        Dividend-adjusted closes, {ticker.firstSession} to {ticker.asOf}. Volatility is annualised
+        from daily log returns; return/risk is the 1Y return over 1Y volatility. A blank figure means
+        too little history to fill that window.
       </Text>
     </ScrollView>
   );
@@ -166,7 +195,17 @@ const styles = StyleSheet.create({
   symbol: { color: C.text, fontFamily: MONO, fontSize: 24, letterSpacing: 2 },
   name: { color: C.dim, fontSize: 12, marginTop: 3 },
   meta: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 0.8, marginTop: 10 },
-  priceBlock: { marginTop: 18, marginBottom: 16 },
+  priceBlock: {
+    marginTop: 18,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+  },
+  capBlock: { alignItems: 'flex-end', paddingBottom: 3 },
+  capLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 0.8 },
+  capValue: { color: C.text, fontFamily: MONO, fontSize: 16, marginTop: 3 },
+  prose: { color: C.dim, fontSize: 11, lineHeight: 18, marginBottom: 10 },
   price: { color: C.text, fontFamily: MONO, fontSize: 34 },
   change: { fontFamily: MONO, fontSize: 13, marginTop: 4 },
   rangeRow: { flexDirection: 'row', marginBottom: 14 },

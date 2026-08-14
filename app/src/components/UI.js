@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { tick } from '../haptics';
 import { C, MONO, S } from '../theme';
@@ -51,6 +51,34 @@ export function Stat({ label, value, color, width = '33.33%' }) {
     <View style={[styles.stat, { width }]}>
       <Text style={styles.statLabel}>{label}</Text>
       <Text style={[styles.statValue, color && { color }]}>{value}</Text>
+    </View>
+  );
+}
+
+/**
+ * A labelled row that reveals its body when tapped.
+ *
+ * Methodology belongs on the screen it describes, but a paragraph of it sitting
+ * open under every ticker is noise for the ninety-nine visits where you already
+ * know how the number is built.
+ */
+export function Disclosure({ label, children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View style={styles.disclosure}>
+      <Pressable
+        onPress={() => {
+          tick();
+          setOpen((wasOpen) => !wasOpen);
+        }}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open }}
+        style={({ pressed }) => [styles.disclosureRow, pressed && styles.disclosurePressed]}
+      >
+        <Text style={styles.disclosureLabel}>{label}</Text>
+        <Text style={styles.disclosureMark}>{open ? '⌄' : '›'}</Text>
+      </Pressable>
+      {open && <View style={styles.disclosureBody}>{children}</View>}
     </View>
   );
 }
@@ -111,6 +139,22 @@ const styles = StyleSheet.create({
   // pill once letterSpacing is applied.
   chipText: { color: C.dim, fontFamily: MONO, fontSize: 10, lineHeight: 13, letterSpacing: 0.8 },
   chipTextActive: { color: C.bg },
+
+  disclosure: {
+    marginTop: 18,
+    borderTopWidth: S.hairline,
+    borderTopColor: C.line,
+  },
+  disclosureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 14,
+  },
+  disclosurePressed: { opacity: 0.6 },
+  disclosureLabel: { color: C.dim, fontFamily: MONO, fontSize: 10, letterSpacing: 1.4 },
+  disclosureMark: { color: C.acid, fontFamily: MONO, fontSize: 14 },
+  disclosureBody: { paddingBottom: 14 },
 
   stat: { paddingVertical: 9, paddingRight: 10 },
   statLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 0.8 },
