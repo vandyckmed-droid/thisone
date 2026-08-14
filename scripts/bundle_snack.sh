@@ -7,18 +7,26 @@
 # generated file is a build artifact -- edit app/src/, never app/snack/.
 #
 # Usage:
-#   scripts/bundle_snack.sh [--data-branch BRANCH]
+#   scripts/bundle_snack.sh [--data-branch BRANCH] [--readable]
 #
-# --data-branch repoints the bundled snapshot URL at a branch, for previewing
+# --data-branch repoints the bundled data directory at a branch, for previewing
 # before the app's branch has merged into main.
+#
+# --readable skips minification. The default is minified: the phone downloads
+# this file and transforms it before anything renders, and a Snack that stalls
+# on "Connecting..." never gets as far as showing an error. Readability in the
+# Snack editor is what make_snack_url.py is for -- it serves the real modular
+# project, which is a better thing to read than either version of this file.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 DATA_BRANCH=""
+MINIFY="--minify"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --data-branch) DATA_BRANCH="$2"; shift 2 ;;
+    --readable) MINIFY=""; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -26,13 +34,15 @@ done
 OUT="app/snack/App.js"
 mkdir -p "$(dirname "$OUT")"
 
-# JSX is preserved rather than lowered to createElement calls, so the file
-# stays readable if someone opens it in the Snack editor.
+# JSX is preserved rather than lowered to createElement calls: Snack's runtime
+# transforms JSX itself, and lowering it here would only add a dependency on a
+# particular React import style.
 npx --yes esbuild app/App.js \
   --bundle \
   --format=esm \
   --jsx=preserve \
   --loader:.js=jsx \
+  ${MINIFY} \
   --external:react \
   --external:react-native \
   --external:react-native-svg \
