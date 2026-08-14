@@ -1,7 +1,7 @@
-# Top 100
+# Top 300
 
-Daily rankings for 200 large US common stocks — the 100 largest by market cap,
-plus 100 more chosen to spread across sectors — on your phone, with no backend.
+Daily rankings for 300 large US common stocks — the 100 largest by market cap,
+plus 200 more chosen to spread across sectors — on your phone, with no backend.
 
 ```
 FMP  ->  build_snapshot.py  ->  validated snapshot.json  ->  GitHub  ->  Expo Go
@@ -36,7 +36,7 @@ export FMP_API_KEY=your_key
 python3 scripts/build_snapshot.py
 ```
 
-It runs in about 45 seconds and does five things in order.
+It runs in about 100 seconds at 300 names and does five things in order.
 
 **Builds the universe.** The FMP screener is asked for a candidate pool several
 times the size of the target, restricted to actively traded US common stocks on
@@ -92,6 +92,7 @@ any size:
 | 25 | 5 | 1 |
 | 100 | 20 | 4 |
 | 200 | 40 | 8 |
+| 300 | 60 | 12 |
 | 1000 | 200 | 40 |
 | 5000 | 1000 | 200 |
 
@@ -101,22 +102,27 @@ so the ceiling rises to 67; forty sectors cannot each be guaranteed 4% of 200,
 so the floor drops to 5. The ceiling is fixed first, because a table that
 cannot be filled is a worse failure than one less balanced than requested.
 
-At 200 the collar costs six names and 0.1% of the market cap it would otherwise
-cover:
+The shipped table of 300 lands on both bounds exactly:
 
-| | Pure market cap | Collar 20/4 |
+| Sector | Names | Share |
 | --- | --- | --- |
-| Technology | 46 | **40** |
-| Utilities | 6 | **8** |
-| Real Estate | 6 | **8** |
-| Basic Materials | 6 | **8** |
-| Largest sector | 23% | **20%** |
-| Smallest sector | 3% | **4%** |
-| Market cap covered | 100% | 99.9% |
+| Technology | 60 | 20.0% *(at the cap)* |
+| Industrials | 49 | 16.3% |
+| Financial Services | 47 | 15.7% |
+| Healthcare | 32 | 10.7% |
+| Consumer Cyclical | 25 | 8.3% |
+| Energy | 19 | 6.3% |
+| Consumer Defensive | 17 | 5.7% |
+| Utilities | 15 | 5.0% |
+| Communication Services | 12 | 4.0% *(at the floor)* |
+| Real Estate | 12 | 4.0% *(at the floor)* |
+| Basic Materials | 12 | 4.0% *(at the floor)* |
 
-Every name it drops sits at #167 or below — the tail of the technology block,
-not its household names — and every name it adds is within about 38 places of
-the cutoff.
+Measured at 200 names, the same collar cost six names and 0.1% of the market
+cap it would otherwise have covered — every name it dropped sat at #167 or
+below, the tail of the technology block rather than its household names.
+Tightening the cap to 16% is where Adobe, Intuit and ADP start to fall out, so
+20% is deliberately the gentle end of the dial.
 
 ### Why not a lookahead
 
@@ -138,7 +144,7 @@ Nothing structural has to change to get bigger:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `TOP_N` | `100` | The market-cap core |
-| `BALANCED_N` | `100` | Names added under the collar |
+| `BALANCED_N` | `200` | Names added under the collar |
 | `SECTOR_CAP_PCT` | `20` | Most of the table any one sector may hold |
 | `SECTOR_FLOOR_PCT` | `4` | Least any sector present may hold |
 | `SELECTION` | `collar` | Or `lookahead` for the earlier method |
@@ -192,7 +198,7 @@ previous snapshot left untouched                     exit 1, snapshot unchanged
 | --- | --- | --- |
 | `FMP_API_KEY` | — | Required. `API_KEY` also works. |
 | `TOP_N` | `100` | Size of the market-cap core |
-| `BALANCED_N` | `100` | Names added under the sector collar |
+| `BALANCED_N` | `200` | Names added under the sector collar |
 | `SECTOR_CAP_PCT` | `20` | Ceiling per sector, as a share of the universe |
 | `SECTOR_FLOOR_PCT` | `4` | Floor per sector, as a share of the universe |
 | `SELECTION` | `collar` | Or `lookahead` for the earlier method |
@@ -212,10 +218,10 @@ only a bare array of closes rather than repeating 523 date strings.
   "schema": 1,
   "generatedAt": "2026-08-14T00:04:30+00:00",
   "dataDate": "2026-08-13",
-  "universeSize": 200,
-  "selection": { "method": "collar", "core": 100, "balanced": 100,
+  "universeSize": 300,
+  "selection": { "method": "collar", "core": 100, "balanced": 200,
                  "sectorCapPct": 20, "sectorFloorPct": 4,
-                 "sectorCap": 40, "sectorFloor": 8 },
+                 "sectorCap": 60, "sectorFloor": 12 },
   "sessions": 523,
   "dates": ["2024-07-15", "..."],          // shared calendar
   "tickers": [
@@ -247,7 +253,7 @@ only a bare array of closes rather than repeating 523 date strings.
 
 `history` is padded with `null` before a ticker's first session, so a recent
 listing charts from its IPO instead of dragging a flat line back through two
-years it never traded. At 200 tickers the file is about **839 KB**.
+years it never traded. At 300 tickers the file is about **1.2 MB**.
 
 ---
 
@@ -290,9 +296,11 @@ Raise `TOP_N` for a bigger market-cap core, or `BALANCED_N` for more of the
 sector-balanced expansion described above. Nothing else has to change.
 
 Size scales linearly at roughly 4 KB per ticker: 100 tickers is 425 KB, 200 is
-839 KB, 400 is about 1.6 MB. All of it is still one fetch, and the app caches
-the last good copy, so the practical ceiling is how long a cold open may take
-on a phone rather than anything structural.
+839 KB, 300 is 1.2 MB. All of it is still one fetch, and the app caches the last
+good copy, so the practical ceiling is how long a cold open may take on a phone
+rather than anything structural. Splitting chart histories into per-ticker files
+is the escape hatch when that stops being comfortable — worth doing when it
+actually bites, not before.
 
 Splitting histories into per-ticker files is worth doing only once the single
 JSON actually becomes too big to fetch comfortably. Until then one file is one
