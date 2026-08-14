@@ -113,25 +113,34 @@ over three months, so it can be checked against any other source, and the
 skipping that momentum needs lives inside momentum rather than being spread
 across the whole table.
 
-**Momentum (`mom`)** scores eleven completed months one at a time and adds the
-results. For each month: average every daily log return inside it, then divide
-by the daily volatility of the 63 sessions ending at that month's close.
+**Momentum (`mom`)** scores eleven blocks of 21 trading days one at a time and
+adds the results. For each block: average every daily log return inside it, then
+divide by the daily volatility of the 63 sessions ending at that block's last
+close.
 
 ```
                 11
-mom  =         SUM   mean daily log return(month m)
-              m = 1  ───────────────────────────────
-                     daily volatility(63 sessions to end of month m)
+mom  =         SUM   mean daily log return(block b)
+              b = 1  ───────────────────────────────
+                     daily volatility(63 sessions to end of block b)
 ```
 
-The most recent completed month is left out entirely, along with the part-month
-the data ends in -- the twelve-minus-one skip, since the latest month tends to
-reverse rather than persist. Each table records the last session the score
-covers in `mom.through`, and the app greys everything after it.
+The blocks roll with the as-of date rather than snapping to calendar months. The
+most recent 21 trading days are skipped, and the 231 before them divide into the
+eleven blocks -- 252 sessions in all, so the measure spans a year ending a month
+back. That is twelve-minus-one counted in sessions.
 
-Volatility spans 63 sessions rather than the month itself because one month
-offers only about 21 returns, far too few for a stable estimate when it sits in
-the denominator of every term.
+Counting in sessions keeps the cutoff a fixed month behind the last close every
+day of the year. Waiting for the calendar to turn instead would mean that by the
+end of a month the score is blind to nearly two, with the skip breathing between
+one month and two depending on when the pipeline happened to run.
+
+Each table records its blocks and the last session the score covers in
+`mom.through`, and the app greys everything after it. The month labels the app
+puts under the bars are only where each block happens to end.
+
+Volatility spans 63 sessions rather than the block itself because 21 returns are
+far too few for a stable estimate when it sits in the denominator of every term.
 
 Both halves of each term are daily quantities, so a monthly score is a unitless
 daily Sharpe and the sum needs no annualising. Annualising both halves only
@@ -140,13 +149,13 @@ changes no ordering at all.
 
 Summing eleven terms rather than measuring one long window is what makes this a
 consistency measure. A company that climbed steadily all year scores in every
-term; one that doubled in a fortnight and drifted for ten months collects once
-and contributes nothing across the rest. Values run about -2 to +3.5.
+term; one that doubled in a fortnight and drifted for ten blocks collects once
+and contributes nothing across the rest. Values run about -2 to +3.
 
-All eleven months or nothing: a sum over whichever months happened to exist
+All eleven blocks or nothing: a sum over whichever blocks happened to exist
 would give a younger company a smaller number rather than a worse one, which is
-not a ranking. Every company in a table is scored on exactly the same eleven
-months, taken from the shared calendar.
+not a ranking. Block boundaries come from the shared calendar as dates, so every
+company in a table is scored over exactly the same stretches of trading.
 
 A window only produces a number when it is genuinely filled. A company that
 listed six weeks ago reports a 30-day volatility and a null 1-year one, rather
@@ -237,8 +246,10 @@ array of closes rather than repeating 584 date strings.
   "scope": "all",
   "universeSize": 300,
   "sessions": 584,
-  "mom": { "months": ["2025-08", "...", "2026-06"], "volSessions": 63,
-           "skipMonths": 1, "through": "2026-06-30" },
+  "mom": { "blocks": [ { "from": "2025-08-13", "to": "2025-09-11",
+                         "volFrom": "2025-06-12" }, "..." ],
+           "blockSessions": 21, "skipSessions": 21, "volSessions": 63,
+           "through": "2026-07-15" },
   "dates": ["2024-04-16", "..."],          // shared calendar
   "tickers": [
     {
@@ -255,10 +266,10 @@ array of closes rather than repeating 584 date strings.
       "asOf": "2026-08-13",
       "returns":         { "1w": 2.88, "1m": 6.02, "3m": 5.49, "6m": 1.96,
                            "ytd": 5.76, "1y": 21.66, "2y": 71.83 },
-      "momMonths":       [ -0.062, 0.19, 0.184, "..." ],
+      "momBlocks":       [ 0.238, -0.031, 0.194, "..." ],
       "volatility":      { "30d": 39.02, "90d": 39.61, "1y": 36.65 },
       "maxDrawdown1y": -20.22,
-      "mom": 0.246,
+      "mom": 0.320,
       "history": [118.42, null, "..."],    // aligned to `dates`
       "firstSession": "2024-04-16"
     }

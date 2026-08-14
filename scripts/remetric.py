@@ -30,8 +30,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from build_snapshot import (  # noqa: E402
-    MOM_MONTHS, TRADING_DAYS_PER_YEAR, WINDOWS,
-    annualised_vol, max_drawdown, mom_meta, mom_window, monthly_momentum,
+    MOM_BLOCKS, TRADING_DAYS_PER_YEAR, WINDOWS,
+    annualised_vol, block_momentum, max_drawdown, mom_blocks, mom_meta,
     pct_change, write_atomically, ytd_change, _round,
 )
 
@@ -41,13 +41,14 @@ DATA = ROOT / "data"
 # Fields the old formulas produced that no longer exist. Left in place they
 # would be a second, contradictory answer to questions the app now asks of the
 # view it is showing.
-RETIRED = ("momentumReturns", "momentumScore", "riskAdjusted1y", "ranks", "momWindows")
+RETIRED = ("momentumReturns", "momentumScore", "riskAdjusted1y", "ranks",
+           "momWindows", "momMonths")
 
 
 def recompute(table: dict) -> tuple[dict, list[str]]:
     """A copy of `table` with every derived metric rebuilt from its history."""
     calendar = table["dates"]
-    months = mom_window(calendar)
+    blocks = mom_blocks(calendar)
     notes: list[str] = []
     rows = []
 
@@ -69,9 +70,9 @@ def recompute(table: dict) -> tuple[dict, list[str]]:
             "1y": _round(annualised_vol(closes, TRADING_DAYS_PER_YEAR)),
         }
         row["maxDrawdown1y"] = _round(max_drawdown(closes, TRADING_DAYS_PER_YEAR))
-        mom_total, mom_scores = monthly_momentum(dated, months)
+        mom_total, mom_scores = block_momentum(dated, blocks)
         row["mom"] = _round(mom_total, 3)
-        row["momMonths"] = [_round(v, 3) for v in mom_scores]
+        row["momBlocks"] = [_round(v, 3) for v in mom_scores]
         rows.append(row)
 
     out = {k: v for k, v in table.items() if k not in ("skip", "momentum", "tickers")}
@@ -86,7 +87,7 @@ def check(table: dict, path: Path) -> list[str]:
     rows = table["tickers"]
     scored = [t for t in rows if t.get("mom") is not None]
 
-    # Momentum needs eleven months plus a 63-session run-up, so a young listing
+    # Momentum needs 252 sessions plus a 63-session run-up, so a young listing
     # having none is expected -- the whole table having none is a broken formula.
     if len(scored) < len(rows) * 0.5:
         errors.append(f"{path.name}: only {len(scored)}/{len(rows)} tickers scored a momentum")
@@ -95,8 +96,8 @@ def check(table: dict, path: Path) -> list[str]:
     for t in rows:
         if t.get("mom") is not None and not -25 < t["mom"] < 25:
             errors.append(f"{path.name}: {t['symbol']} momentum {t['mom']} out of range")
-        if t.get("mom") is not None and len(t.get("momMonths") or []) != MOM_MONTHS:
-            errors.append(f"{path.name}: {t['symbol']} scored on {len(t.get('momMonths') or [])} months, need {MOM_MONTHS}")
+        if t.get("mom") is not None and len(t.get("momBlocks") or []) != MOM_BLOCKS:
+            errors.append(f"{path.name}: {t['symbol']} scored on {len(t.get('momBlocks') or [])} blocks, need {MOM_BLOCKS}")
         if t["returns"].get("1y") is not None and not -100 <= t["returns"]["1y"] < 10000:
             errors.append(f"{path.name}: {t['symbol']} 1y return {t['returns']['1y']}% out of range")
     return errors
