@@ -31,8 +31,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from build_snapshot import (  # noqa: E402
     MOM_BLOCKS, TRADING_DAYS_PER_YEAR, WINDOWS,
-    annualised_vol, block_momentum, max_drawdown, mom_blocks, mom_meta,
-    pct_change, write_atomically, ytd_change, _round,
+    annualised_vol, blend_momentum, blend_windows, block_momentum,
+    max_drawdown, mom_blocks, mom_meta, pct_change, write_atomically,
+    ytd_change, _round,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -49,6 +50,7 @@ def recompute(table: dict) -> tuple[dict, list[str]]:
     """A copy of `table` with every derived metric rebuilt from its history."""
     calendar = table["dates"]
     blocks = mom_blocks(calendar)
+    windows = blend_windows(calendar)
     notes: list[str] = []
     rows = []
 
@@ -73,10 +75,18 @@ def recompute(table: dict) -> tuple[dict, list[str]]:
         mom_total, mom_scores = block_momentum(dated, blocks)
         row["mom"] = _round(mom_total, 3)
         row["momBlocks"] = [_round(v, 3) for v in mom_scores]
+        blend_total, blend_scores = blend_momentum(dated, windows)
+        row["blend"] = _round(blend_total, 3)
+        row["blendWindows"] = [_round(v, 3) for v in blend_scores]
         rows.append(row)
 
     out = {k: v for k, v in table.items() if k not in ("skip", "momentum", "tickers")}
     out["mom"] = mom_meta(calendar)
+    out["blend"] = {
+        "windows": windows,
+        "measure": ("mean daily log return / daily volatility over the same "
+                    "window, times sqrt(252), averaged over two windows"),
+    }
     out["tickers"] = rows
     return out, notes
 
@@ -96,6 +106,8 @@ def check(table: dict, path: Path) -> list[str]:
     for t in rows:
         if t.get("mom") is not None and not -25 < t["mom"] < 25:
             errors.append(f"{path.name}: {t['symbol']} momentum {t['mom']} out of range")
+        if t.get("blend") is not None and not -25 < t["blend"] < 25:
+            errors.append(f"{path.name}: {t['symbol']} blend {t['blend']} out of range")
         if t.get("mom") is not None and len(t.get("momBlocks") or []) != MOM_BLOCKS:
             errors.append(f"{path.name}: {t['symbol']} scored on {len(t.get('momBlocks') or [])} blocks, need {MOM_BLOCKS}")
         if t["returns"].get("1y") is not None and not -100 <= t["returns"]["1y"] < 10000:

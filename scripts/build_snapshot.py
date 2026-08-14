@@ -116,6 +116,20 @@ MOM_BLOCK_SESSIONS = 21
 MOM_SKIP_SESSIONS = 21
 MOM_VOL_SESSIONS = 63
 
+# BLEND is the other way of asking the same question: instead of eleven small
+# windows scored separately, two long ones -- twelve months minus one, and six
+# minus one -- each measured whole and the pair averaged. Where MOM rewards a
+# company for climbing in term after term, BLEND only asks how the whole run
+# looked, so a single decisive stretch can carry it. Both are published; the
+# table lets the reader sort by either.
+#
+# Each window is a mean daily log return over the daily volatility of the same
+# stretch, multiplied by sqrt(252). That multiplier is exactly what annualising
+# both halves of the ratio amounts to -- the return scales by 252 and the
+# volatility by its root -- so it is a constant that reorders nothing and is
+# applied here only because the resulting numbers read more naturally.
+BLEND_WINDOWS = ((250, 20), (125, 10))
+
 # Names that betray a note, bond, preferred or depositary line rather than a
 # common share. FMP reports these with the *parent company's* market cap.
 NON_COMMON_MARKERS = (
@@ -458,6 +472,57 @@ def mom_meta(calendar: list[str]) -> dict[str, Any]:
     }
 
 
+def blend_windows(calendar: list[str]) -> list[dict[str, Any]]:
+    """The two long windows BLEND averages, as dates off the shared calendar."""
+    n = len(calendar)
+    windows: list[dict[str, Any]] = []
+    for sessions, skip in BLEND_WINDOWS:
+        start, end = n - 1 - sessions, n - 1 - skip
+        if start < 0 or end <= start:
+            return []
+        windows.append({"sessions": sessions, "skip": skip,
+                        "from": calendar[start], "to": calendar[end]})
+    return windows
+
+
+def window_sharpe(dated: list[tuple[str, float]], window: dict[str, Any]) -> float | None:
+    """One BLEND window: daily return over daily volatility, times sqrt(252).
+
+    Both halves are daily quantities over the same stretch, so the ratio is a
+    daily Sharpe; the multiplier is the whole of what annualising both halves
+    would do, and changes no ordering.
+    """
+    days = [day for day, _ in dated]
+    start = bisect.bisect_left(days, window["from"])
+    end = bisect.bisect_right(days, window["to"]) - 1
+    if end <= start:
+        return None
+
+    rets = []
+    for i in range(max(start + 1, 1), end + 1):
+        before, after = dated[i - 1][1], dated[i][1]
+        if before > 0 and after > 0:
+            rets.append(math.log(after / before))
+    if len(rets) < window["sessions"] - window["skip"]:
+        return None
+
+    deviation = statistics.pstdev(rets)
+    if deviation <= 0:
+        return None
+    return (sum(rets) / len(rets)) / deviation * math.sqrt(TRADING_DAYS_PER_YEAR)
+
+
+def blend_momentum(dated: list[tuple[str, float]],
+                   windows: list[dict[str, Any]]) -> tuple[float | None, list[float]]:
+    """BLEND and the two window scores it averages. Both windows or nothing."""
+    if not windows:
+        return None, []
+    scores = [window_sharpe(dated, w) for w in windows]
+    if any(s is None for s in scores):
+        return None, []
+    return sum(scores) / len(scores), scores
+
+
 def block_momentum(dated: list[tuple[str, float]],
                    blocks: list[dict[str, str]]) -> tuple[float | None, list[float]]:
     """MOM and the eleven block scores it sums.
@@ -539,6 +604,7 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
 
     vol_1y = annualised_vol(closes, TRADING_DAYS_PER_YEAR)
     mom_total, mom_scores = block_momentum(dated, mom_blocks(calendar))
+    blend_total, blend_scores = blend_momentum(dated, blend_windows(calendar))
 
     return {
         **{k: entry[k] for k in ("symbol", "name", "sector", "industry", "exchange", "logo")},
@@ -561,6 +627,8 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
         # is that ratio's standing among whatever rows are on screen, which only
         # the app can know, so no scaled score is published here.
         "mom": _round(mom_total, 3),
+        "blend": _round(blend_total, 3),
+        "blendWindows": [_round(v, 3) for v in blend_scores],
         "history": [round(c, 2) if c is not None else None for c in aligned],
         "firstSession": dated[0][0],
     }
@@ -676,6 +744,11 @@ def assemble(tickers: list[dict[str, Any]], calendar: list[str],
         "scope": scope,
         "universeSize": len(rows),
         "mom": mom_meta(calendar),
+        "blend": {
+            "windows": blend_windows(calendar),
+            "measure": ("mean daily log return / daily volatility over the same "
+                        "window, times sqrt(252), averaged over two windows"),
+        },
         "sessions": len(calendar),
         "dates": calendar,
         "tickers": rows,

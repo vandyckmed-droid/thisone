@@ -157,6 +157,29 @@ would give a younger company a smaller number rather than a worse one, which is
 not a ranking. Block boundaries come from the shared calendar as dates, so every
 company in a table is scored over exactly the same stretches of trading.
 
+**BLEND (`blend`)** asks the same question over two long windows instead of
+eleven short ones: twelve months minus one (250 sessions, skipping 20) and six
+minus one (125, skipping 10). Each is a mean daily log return over the daily
+volatility of that same stretch, multiplied by sqrt(252), and the two are
+averaged.
+
+```
+blend  =  mean of, over each window w:
+
+              mean daily log return(w)
+              ────────────────────────  x  sqrt(252)
+              daily volatility(w)
+```
+
+The sqrt(252) is exactly what annualising both halves of the ratio amounts to --
+the return scales by 252 and the volatility by its root -- so it is a constant
+that reorders nothing, applied because the numbers read more naturally with it.
+
+MOM and BLEND disagree, which is the point of publishing both. MOM adds eleven
+separately-scored blocks, so a company has to keep earning across the year;
+BLEND measures each long window in one piece, so one decisive run can carry it.
+Sorting by each in turn shows which kind of year a company had.
+
 A window only produces a number when it is genuinely filled. A company that
 listed six weeks ago reports a 30-day volatility and a null 1-year one, rather
 than passing six weeks of noise off as a year.
@@ -267,6 +290,8 @@ array of closes rather than repeating 584 date strings.
       "returns":         { "1w": 2.88, "1m": 6.02, "3m": 5.49, "6m": 1.96,
                            "ytd": 5.76, "1y": 21.66, "2y": 71.83 },
       "momBlocks":       [ 0.238, -0.031, 0.194, "..." ],
+      "blend": 0.63,
+      "blendWindows":    [ 0.72, 0.54 ],
       "volatility":      { "30d": 39.02, "90d": 39.61, "1y": 36.65 },
       "maxDrawdown1y": -20.22,
       "mom": 0.320,
