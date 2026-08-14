@@ -28,6 +28,8 @@ SELECTION               "collar" (default) or "lookahead"
 SECTOR_CAP_PCT          most of the universe any one sector may hold (default 20)
 SECTOR_FLOOR_PCT        least any sector present may hold (default 4)
 LOOKAHEAD               candidates the lookahead method weighs (default 5)
+MOMENTUM_SKIP_RATIO     share of each momentum window left off its recent end
+                        (default 0.08 = 20 sessions per 250; 0 disables it)
 HISTORY_DAYS            calendar days of history to request (default 760)
 OUTPUT                  snapshot path (default data/snapshot.json)
 MAX_WORKERS             concurrent API requests (default 8)
@@ -97,10 +99,19 @@ MIN_CALENDAR_SESSIONS = 200
 TRADING_DAYS_PER_YEAR = 252
 WINDOWS = {"1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252, "2y": 504}
 
-# Momentum deliberately ignores the most recent month. Very short-term moves
-# tend to reverse rather than persist, so a window running right up to today
-# measures noise on top of the trend. Skipping it is the standard construction.
-MOMENTUM_SKIP = 21
+# Momentum ignores the most recent stretch of each window, because very
+# short-term moves tend to reverse rather than persist, so a window running
+# right up to today measures noise sitting on top of the trend.
+#
+# The skip scales with the window rather than being one fixed month for all of
+# them: 20 sessions off a 250-session year, so 10 off six months and 5 off
+# three. A fixed month takes a twelfth off the yearly window but a third off
+# the quarterly one, which is a far heavier hand on the short end than the
+# long. Proportional skipping treats every horizon the same way.
+MOMENTUM_SKIP_RATIO = float(os.environ.get("MOMENTUM_SKIP_RATIO", 20 / 250))
+# Below a quarter there is too little window left to be worth measuring once a
+# proportional bite is taken out of it, so short windows skip nothing at all.
+MOMENTUM_MIN_SKIP_WINDOW = 63
 MOMENTUM_WINDOWS = {"3m": 63, "6m": 126, "9m": 189, "12m": 252}
 
 # Names that betray a note, bond, preferred or depositary line rather than a
@@ -459,6 +470,13 @@ def _window(closes: list[float], sessions: int) -> list[float] | None:
     return window
 
 
+def momentum_skip(sessions: int) -> int:
+    """Sessions to leave off the end of a `sessions`-long momentum window."""
+    if sessions < MOMENTUM_MIN_SKIP_WINDOW:
+        return 0
+    return round(sessions * MOMENTUM_SKIP_RATIO)
+
+
 def pct_change_skip(closes: list[float], sessions: int, skip: int) -> float | None:
     """Return over `sessions`, measured to `skip` sessions ago rather than today."""
     if len(closes) < sessions + skip + 1:
@@ -530,7 +548,7 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
         # The skip-a-month windows momentum is built from, kept in the snapshot
         # so the score can be checked rather than taken on trust.
         "momentumReturns": {
-            label: _round(pct_change_skip(closes, n, MOMENTUM_SKIP))
+            label: _round(pct_change_skip(closes, n, momentum_skip(n)))
             for label, n in MOMENTUM_WINDOWS.items()
         },
         "volatility": {
@@ -740,6 +758,13 @@ def build_snapshot() -> dict[str, Any]:
                 "sectorCap": cap,
                 "sectorFloor": floor,
             }),
+        },
+        # Published so the score can be checked rather than taken on trust:
+        # each window and how much of its recent end was left out.
+        "momentum": {
+            "windows": dict(MOMENTUM_WINDOWS),
+            "skips": {k: momentum_skip(n) for k, n in MOMENTUM_WINDOWS.items()},
+            "skipRatio": round(MOMENTUM_SKIP_RATIO, 4),
         },
         "sessions": len(calendar),
         "dates": calendar,
