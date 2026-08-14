@@ -1,8 +1,8 @@
 # Top 300
 
-Daily rankings for large US common stocks, with no backend — the 300 largest by
-market cap, plus the 100 largest inside each of the eleven sectors, as twelve
-static JSON files.
+Daily rankings for large US common stocks, with no backend — the 600 largest by
+market cap as two bands of 300, plus the 100 largest inside each of the eleven
+sectors, as thirteen static JSON files.
 
 ```
 FMP  ->  build_snapshot.py  ->  validated JSON  ->  build_web.py  ->  one HTML file
@@ -26,6 +26,7 @@ account anywhere in the loop.
 | `web/logos.json` | Base64 WebP logos by symbol, plus which are opaque |
 | `data/index.json` | The list of universes — the first file the app reads |
 | `data/snapshot.json` | The Top 300 |
+| `data/next300.json` | The next 300, ranks 301-600 by market cap |
 | `data/sectors/*.json` | One file per sector, the 100 largest in each |
 | `app/src/` | The retired React Native original, kept for reference |
 
@@ -69,12 +70,18 @@ Three filters remove all of it:
 
 ### Selecting the universes
 
-Twelve tables, every one of them a plain "largest by market cap" list:
+Thirteen tables, every one of them a plain "largest by market cap" list:
 
 | Table | Contents |
 | --- | --- |
 | `snapshot.json` | The largest `TOP_N` companies overall |
+| `next300.json` | The `NEXT_N` companies ranked just below them |
 | `sectors/<sector>.json` | The largest `SECTOR_N` companies within that sector |
+
+The two whole-market bands are separate universes rather than one list of six
+hundred, for the same reason a sector file ranks itself: a placing only means
+something against the field it was measured in, so a company is #1 of the next
+300 rather than #301 overall.
 
 There is no balancing, no quota and no collar. An earlier version selected the
 universe under a sector cap and floor, which existed only to stop one sector

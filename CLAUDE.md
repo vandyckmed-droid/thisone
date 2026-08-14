@@ -108,6 +108,7 @@ secret has to exist for the pipeline to run.
 | `web/top300.html` | Generated page — never edit, never commit |
 | `data/index.json` | The list of universes — the first file the app reads |
 | `data/snapshot.json` | The Top 300 |
+| `data/next300.json` | The next 300 — ranks 301-600 by market cap |
 | `data/sectors/*.json` | The top 100 in each sector |
 | `app/src/` | The retired React Native original, kept for reference |
 
@@ -121,6 +122,10 @@ data run of any kind.
 
 Invariants worth not breaking:
 
+- The two whole-market bands are separate universes, not one list of six
+  hundred. A company is #1 of the next 300 rather than #301 overall, because a
+  placing only means something against the field it was measured in — the same
+  reason a sector file ranks itself. `NEXT_N` sizes the band.
 - Nothing in `data/` is ranked — and no momentum score is published either.
   The score is a function of the reader's formula settings (lookback window,
   skip, volatility adjustment, market/sector residuals, 50/50 blend), so the
