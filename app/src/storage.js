@@ -19,6 +19,8 @@ export const DEFAULT_SETTINGS = {
   showSparklines: true,
   refreshOnOpen: true,
   haptics: true,
+  // Flipped the first time a chart is scrubbed, so the hint appears once.
+  hasScrubbed: false,
 };
 
 const read = async (key, fallback) => {

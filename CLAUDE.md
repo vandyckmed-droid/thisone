@@ -32,8 +32,8 @@ changed nothing.** Which link depends on whether the app moved:
 ### Standing link
 
 ```
-exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=meGmdgF3ohC_biaaFk85j
-https://snack.expo.dev/meGmdgF3ohC_biaaFk85j
+exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=vbfRNN6ySg8kR1LDqBA9T
+https://snack.expo.dev/vbfRNN6ySg8kR1LDqBA9T
 ```
 
 Keep this block current — it is the answer to "what do I tap right now".

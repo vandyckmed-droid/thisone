@@ -4,22 +4,26 @@ import { Platform } from 'react-native';
 // everything else is graphite so the green never competes with itself.
 export const C = {
   bg: '#0A0B0C',
-  surface: '#121316',
-  surfaceHi: '#191B1F',
-  line: '#232629',
-  lineSoft: '#1A1D20',
+  surface: '#141518',
+  surfaceHi: '#1C1E22',
+  line: '#2A2D32',
+  lineSoft: '#1F2226',
 
-  text: '#ECEDEE',
-  dim: '#9BA1A8',
-  faint: '#61666D',
+  // Secondary text was too dim to carry the weight it was being given. `dim`
+  // clears 7:1 on the page background and `faint` clears 4.5:1, so a label at
+  // the smallest size in use is still comfortably readable rather than merely
+  // present.
+  text: '#F0F1F2',
+  dim: '#B6BCC4',
+  faint: '#8A9098',
 
   acid: '#C8FF00',
-  acidDim: '#8FB800',
+  acidDim: '#A6D400',
   acidGlow: 'rgba(200,255,0,0.10)',
 
   up: '#C8FF00',
-  down: '#FF5334',
-  flat: '#9BA1A8',
+  down: '#FF6B4F',
+  flat: '#8A9098',
 };
 
 // Tabular figures matter more than typeface here: columns of prices only read
@@ -30,10 +34,31 @@ export const MONO = Platform.select({
   default: 'monospace',
 });
 
+// One type scale, with a floor. Nothing renders below `micro`, and `micro` is
+// 11 rather than the 9 this used to reach for -- at arm's length on a phone,
+// 9pt mono in graphite is decoration, not information.
+export const T = {
+  micro: 11,
+  small: 12,
+  body: 13,
+  large: 15,
+  title: 20,
+  display: 34,
+};
+
 export const S = {
   gutter: 16,
   radius: 10,
   hairline: 1,
+  // Apple's minimum comfortable target. Visible pills stay small; the touchable
+  // area around them does not.
+  tap: 44,
+};
+
+/** hitSlop that grows a control of `size` out to a full tap target. */
+export const slop = (size) => {
+  const pad = Math.max(0, Math.round((S.tap - size) / 2));
+  return { top: pad, bottom: pad, left: pad, right: pad };
 };
 
 export const tone = (value) => {
@@ -64,6 +89,10 @@ export const fmtPct = (n, digits = 2) => {
   return `${n >= 0 ? '+' : ''}${n.toFixed(digits)}%`;
 };
 
+/** For magnitudes like volatility, where a leading + would read as a gain. */
+export const fmtMagnitude = (n, digits = 1) =>
+  n === null || n === undefined ? '—' : `${n.toFixed(digits)}%`;
+
 export const fmtNum = (n, digits = 2) =>
   n === null || n === undefined ? '—' : n.toFixed(digits);
 
@@ -79,4 +108,18 @@ export const fmtWhen = (iso) => {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+};
+
+/** Why a metric is blank, so a bare dash never has to speak for itself. */
+export const missingReason = (key) => {
+  switch (key) {
+    case 'momentum': return 'Needs ~13 months';
+    case '2y': return 'Needs 2 years';
+    case '1y': case 'riskAdjusted': case 'maxDrawdown': return 'Needs 1 year';
+    case '9m': return 'Needs 9 months';
+    case '6m': case '90d': return 'Needs 6 months';
+    case '3m': return 'Needs 3 months';
+    case 'ytd': return 'Listed this year';
+    default: return 'Not enough history';
+  }
 };
