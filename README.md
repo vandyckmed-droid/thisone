@@ -113,27 +113,40 @@ over three months, so it can be checked against any other source, and the
 skipping that momentum needs lives inside momentum rather than being spread
 across the whole table.
 
-**Momentum (`mom`)** is risk-adjusted rather than a blend of raw returns. Two
-windows are measured — the last 250 sessions stopping 20 short of today, and the
-last 125 stopping 10 short. Over each, the return is annualised and divided by
-the annualised volatility of that same stretch, and the two ratios averaged:
+**Momentum (`mom`)** scores eleven completed months one at a time and adds the
+results. For each month: average every daily log return inside it, then divide
+by the daily volatility of the 63 sessions ending at that month's close.
 
 ```
-mom = mean( annualised return(250,20) / annualised vol(250,20),
-            annualised return(125,10) / annualised vol(125,10) )
+                11
+mom  =         SUM   mean daily log return(month m)
+              m = 1  ───────────────────────────────
+                     daily volatility(63 sessions to end of month m)
 ```
 
-Each window stops short of today because very short-term moves tend to reverse
-rather than persist, so a window running to the last close measures noise
-sitting on the trend. Two windows rather than one because a company strong over
-both the year and the half year is trending, where one that wins on a single
-window is usually carrying a spike. Dividing by volatility is what separates it
-from a return column: a stock up 60% on a wild ride and one up 30% grinding
-steadily can land at the same ratio.
+The most recent completed month is left out entirely, along with the part-month
+the data ends in -- the twelve-minus-one skip, since the latest month tends to
+reverse rather than persist. Each table records the last session the score
+covers in `mom.through`, and the app greys everything after it.
 
-The published value is an absolute ratio — typically −1.5 to 4, and a genuine
-30-bagger annualises into the 20s. What the app shows beside a row is that
-ratio's standing among the rows on screen, which only the app can know.
+Volatility spans 63 sessions rather than the month itself because one month
+offers only about 21 returns, far too few for a stable estimate when it sits in
+the denominator of every term.
+
+Both halves of each term are daily quantities, so a monthly score is a unitless
+daily Sharpe and the sum needs no annualising. Annualising both halves only
+multiplies the result by a constant -- for the record, sqrt(252) -- which
+changes no ordering at all.
+
+Summing eleven terms rather than measuring one long window is what makes this a
+consistency measure. A company that climbed steadily all year scores in every
+term; one that doubled in a fortnight and drifted for ten months collects once
+and contributes nothing across the rest. Values run about -2 to +3.5.
+
+All eleven months or nothing: a sum over whichever months happened to exist
+would give a younger company a smaller number rather than a worse one, which is
+not a ranking. Every company in a table is scored on exactly the same eleven
+months, taken from the shared calendar.
 
 A window only produces a number when it is genuinely filled. A company that
 listed six weeks ago reports a 30-day volatility and a null 1-year one, rather
@@ -224,9 +237,8 @@ array of closes rather than repeating 584 date strings.
   "scope": "all",
   "universeSize": 300,
   "sessions": 584,
-  "mom": { "windows": [ { "sessions": 250, "skip": 20 },
-                        { "sessions": 125, "skip": 10 } ],
-           "measure": "annualised return / annualised volatility, averaged" },
+  "mom": { "months": ["2025-08", "...", "2026-06"], "volSessions": 63,
+           "skipMonths": 1, "through": "2026-06-30" },
   "dates": ["2024-04-16", "..."],          // shared calendar
   "tickers": [
     {
@@ -243,10 +255,10 @@ array of closes rather than repeating 584 date strings.
       "asOf": "2026-08-13",
       "returns":         { "1w": 2.88, "1m": 6.02, "3m": 5.49, "6m": 1.96,
                            "ytd": 5.76, "1y": 21.66, "2y": 71.83 },
-      "momWindows":      { "250-20": 0.425, "125-10": 0.258 },
+      "momMonths":       [ -0.062, 0.19, 0.184, "..." ],
       "volatility":      { "30d": 39.02, "90d": 39.61, "1y": 36.65 },
       "maxDrawdown1y": -20.22,
-      "mom": 0.341,
+      "mom": 0.246,
       "history": [118.42, null, "..."],    // aligned to `dates`
       "firstSession": "2024-04-16"
     }

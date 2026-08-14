@@ -87,17 +87,26 @@ WINDOWS = {"1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252, "2y": 504}
 # return" on the table means exactly that, so it can be checked against any
 # other source, and the skipping that momentum needs lives inside momentum.
 #
-# MOM is that skipping, and it is a risk-adjusted measure rather than a blend
-# of raw returns: over each window, the annualised return divided by the
-# annualised volatility of the same window, and the two averaged.
+# MOM scores each of eleven completed months on its own: the month's mean daily
+# log return over a 63-session volatility measured to that month's end, summed.
+# Eleven monthly scores rather than one window return is what makes it a
+# consistency measure -- a stock that climbed steadily every month scores in
+# every term, while one that doubled in a fortnight and drifted for ten months
+# collects once and contributes nothing the rest of the year.
 #
-# Each window stops short of today -- 20 sessions off the yearly one, 10 off
-# the half-yearly -- because very short-term moves tend to reverse rather than
-# persist, so a window running right to the last close measures noise sitting
-# on top of the trend. Two windows rather than one because a stock that is
-# strong over the year and the half year is trending; one that wins on a
-# single window is usually carrying a spike.
-MOM_WINDOWS = ((250, 20), (125, 10))
+# Both halves are daily quantities, so each monthly score is a unitless daily
+# Sharpe and the sum needs no annualising. Annualising both halves only ever
+# multiplied the result by sqrt(252) anyway -- a constant that changed no
+# ordering -- and the earlier attempt to do it geometrically, compounding a
+# simple return over a log-return volatility, mixed two scales and inflated
+# exactly the most extreme names.
+#
+# The volatility window is 63 sessions rather than the month itself because a
+# single month offers about 21 returns, which is far too few for a stable
+# estimate -- and it sits in the denominator of every term.
+MOM_MONTHS = 11
+MOM_SKIP_MONTHS = 1
+MOM_VOL_SESSIONS = 63
 
 # Names that betray a note, bond, preferred or depositary line rather than a
 # common share. FMP reports these with the *parent company's* market cap.
@@ -391,45 +400,87 @@ def annualised_vol(closes: list[float], sessions: int) -> float | None:
     return statistics.pstdev(rets) * math.sqrt(TRADING_DAYS_PER_YEAR) * 100
 
 
-def window_ratio(closes: list[float], sessions: int, skip: int) -> float | None:
-    """Annualised return over one MOM window, divided by its own volatility.
+def mom_window(calendar: list[str]) -> list[str]:
+    """The eleven months MOM scores, as ``YYYY-MM``.
 
-    The window spans from `sessions` ago to `skip` ago, so both halves of the
-    ratio describe the same stretch of trading -- the return earned over it and
-    the turbulence endured for that return. Annualising both keeps windows of
-    different lengths on one scale, so the 250-20 and 125-10 figures can be
-    averaged without one of them quietly dominating.
+    A month counts as completed only when the calendar carries a session in a
+    later one, so the part-month the data ends in is never scored. The most
+    recent completed month is then dropped -- the classic twelve-minus-one
+    skip, since the latest month tends to reverse rather than persist -- and
+    the eleven before it are what remain.
+
+    Derived from the shared calendar rather than each ticker's own sessions, so
+    every company in a table is scored on exactly the same eleven months.
     """
-    if len(closes) < sessions + 1:
-        return None
-    window = closes[-(sessions + 1):len(closes) - skip]
-    if len(window) < 20 or window[0] <= 0 or window[-1] <= 0:
-        return None
-
-    span = len(window) - 1                       # daily returns in the window
-    growth = window[-1] / window[0]
-    annual_return = growth ** (TRADING_DAYS_PER_YEAR / span) - 1
-
-    rets = [math.log(b / a) for a, b in zip(window, window[1:]) if a > 0 and b > 0]
-    if len(rets) < 19:
-        return None
-    annual_vol = statistics.pstdev(rets) * math.sqrt(TRADING_DAYS_PER_YEAR)
-    if annual_vol <= 0:
-        return None
-    return annual_return / annual_vol
+    months = sorted({day[:7] for day in calendar})
+    completed = months[:-1]
+    usable = completed[:-MOM_SKIP_MONTHS] if MOM_SKIP_MONTHS else completed
+    return usable[-MOM_MONTHS:]
 
 
-def momentum(closes: list[float]) -> float | None:
-    """MOM: the average of the two windows' return-per-unit-of-volatility.
+def mom_meta(calendar: list[str]) -> dict[str, Any]:
+    """What MOM covered, so the app can say so and grey what it did not.
 
-    Both windows or nothing. Averaging whichever happened to be available would
-    be a different statistic wearing the same name, so a company without the
-    full 250 sessions simply has no momentum yet.
+    `through` is the last session MOM sees. Everything after it -- the skipped
+    month and the part-month the data ends in -- is the stretch the score is
+    blind to, which is exactly what the app draws in grey.
     """
-    ratios = [window_ratio(closes, n, skip) for n, skip in MOM_WINDOWS]
-    if any(r is None for r in ratios):
-        return None
-    return sum(ratios) / len(ratios)
+    months = mom_window(calendar)
+    through = max((d for d in calendar if d[:7] == months[-1]), default=None) if months else None
+    return {
+        "months": months,
+        "volSessions": MOM_VOL_SESSIONS,
+        "skipMonths": MOM_SKIP_MONTHS,
+        "through": through,
+        "measure": "sum over 11 months of (mean daily log return / 63-session daily volatility)",
+    }
+
+
+def monthly_momentum(dated: list[tuple[str, float]],
+                     months: list[str]) -> tuple[float | None, list[float]]:
+    """MOM and the eleven monthly scores it sums.
+
+    Each month contributes its mean daily log return divided by the daily
+    volatility of the 63 sessions ending with it. All eleven or nothing: a sum
+    over whichever months happened to exist would be a smaller number for a
+    younger company rather than a worse one, which is not a ranking.
+    """
+    if len(months) < MOM_MONTHS or len(dated) < 2:
+        return None, []
+
+    # Log returns indexed against `dated`; index 0 has no predecessor.
+    rets: list[float | None] = [None]
+    for (_, before), (_, after) in zip(dated, dated[1:]):
+        rets.append(math.log(after / before) if before > 0 and after > 0 else None)
+
+    first: dict[str, int] = {}
+    last: dict[str, int] = {}
+    for i, (day, _) in enumerate(dated):
+        first.setdefault(day[:7], i)
+        last[day[:7]] = i
+
+    scores: list[float] = []
+    for month in months:
+        if month not in last:
+            return None, []
+        start, end = max(first[month], 1), last[month]
+        in_month = [rets[i] for i in range(start, end + 1) if rets[i] is not None]
+        if not in_month:
+            return None, []
+
+        floor = end - MOM_VOL_SESSIONS + 1
+        if floor < 1:
+            return None, []
+        window = [rets[i] for i in range(floor, end + 1) if rets[i] is not None]
+        if len(window) < MOM_VOL_SESSIONS:
+            return None, []
+
+        deviation = statistics.pstdev(window)
+        if deviation <= 0:
+            return None, []
+        scores.append((sum(in_month) / len(in_month)) / deviation)
+
+    return sum(scores), scores
 
 
 def max_drawdown(closes: list[float], sessions: int) -> float | None:
@@ -469,6 +520,7 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
     returns["ytd"] = ytd_change(dated)
 
     vol_1y = annualised_vol(closes, TRADING_DAYS_PER_YEAR)
+    mom_total, mom_scores = monthly_momentum(dated, mom_window(calendar))
 
     return {
         **{k: entry[k] for k in ("symbol", "name", "sector", "industry", "exchange", "logo")},
@@ -478,12 +530,9 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
         "changePct": round((price / previous - 1) * 100, 2) if previous > 0 else 0.0,
         "asOf": dated[-1][0],
         "returns": {k: (round(v, 2) if v is not None else None) for k, v in returns.items()},
-        # Each MOM window's own ratio, kept so the score can be checked rather
-        # than taken on trust.
-        "momWindows": {
-            f"{n}-{skip}": _round(window_ratio(closes, n, skip), 3)
-            for n, skip in MOM_WINDOWS
-        },
+        # The eleven terms the score sums, kept so it can be checked rather than
+        # taken on trust -- and so the app can show how evenly they fell.
+        "momMonths": [_round(s, 3) for s in mom_scores],
         "volatility": {
             "30d": _round(annualised_vol(closes, 30)),
             "90d": _round(annualised_vol(closes, 90)),
@@ -493,7 +542,7 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
         # The score itself is an absolute ratio. What the app shows beside a row
         # is that ratio's standing among whatever rows are on screen, which only
         # the app can know, so no scaled score is published here.
-        "mom": _round(momentum(closes), 3),
+        "mom": _round(mom_total, 3),
         "history": [round(c, 2) if c is not None else None for c in aligned],
         "firstSession": dated[0][0],
     }
@@ -608,11 +657,7 @@ def assemble(tickers: list[dict[str, Any]], calendar: list[str],
         "title": title,
         "scope": scope,
         "universeSize": len(rows),
-        "mom": {
-            # Sessions in each window and how many it stops short of today.
-            "windows": [{"sessions": n, "skip": skip} for n, skip in MOM_WINDOWS],
-            "measure": "annualised return / annualised volatility, averaged",
-        },
+        "mom": mom_meta(calendar),
         "sessions": len(calendar),
         "dates": calendar,
         "tickers": rows,
