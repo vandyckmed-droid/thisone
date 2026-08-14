@@ -7,18 +7,27 @@ way onto a phone is scanning its QR code. Saving mints a permanent id, and a
 saved Snack can be opened by an `exp://` deep link that launches Expo Go
 directly -- one tap, no QR, no copy-paste.
 
-Expo only serves a Snack runtime for some SDK versions, and saving against an
-unsupported one fails *silently*: the save succeeds and the page loads, but the
-deep link comes back without its `snack=` parameter and the phone has nothing
-to open. So this script saves, reads the deep link back off the Snack's own
-page, and treats a missing `snack=` as failure -- walking SDK versions from
-newest down until one actually binds.
+Picking the SDK version is the whole difficulty, and it fails in two different
+ways:
+
+1. Saving against an SDK whose Snack runtime does not exist fails *silently* --
+   the save succeeds and the page loads, but the deep link comes back without
+   its `snack=` parameter and the phone has nothing to open.
+2. Worse, an SDK can bind on Snack's side and still be too new for the Expo Go
+   actually installed on the phone, which greets the tap with "Project is
+   incompatible with this version of Expo Go".
+
+Case 2 means "newest version that binds" is the wrong target. The right target
+is the runtime Snack itself falls back to, which is the one its Expo Go
+integration ships against. Only the page of a *saved* Snack renders that value,
+so this script saves a deliberately unbindable probe, reads the fallback
+runtime off its page, and then publishes against exactly that.
 
 Usage:
     python3 scripts/publish_snack.py [--bundle] [--sdk 54.0.0]
 
     --bundle   regenerate app/snack/App.js first
-    --sdk      force one SDK version instead of probing
+    --sdk      force one SDK version instead of probing for it
 """
 
 import argparse
@@ -31,7 +40,6 @@ import urllib.parse
 import urllib.request
 
 SAVE_ENDPOINT = "https://exp.host/--/api/v2/snack/save"
-VERSIONS_ENDPOINT = "https://exp.host/--/api/v2/versions"
 SNACK_PAGE = "https://snack.expo.dev/{id}"
 BUNDLE = "app/snack/App.js"
 
@@ -48,18 +56,28 @@ def get(url: str, timeout: int = 45) -> str:
         return resp.read().decode("utf-8", "replace")
 
 
-def candidate_sdks(forced: str | None) -> list[str]:
-    if forced:
-        return [forced]
+# An SDK far beyond anything Expo will ship, so the probe is guaranteed not to
+# bind and its page is guaranteed to show the fallback runtime.
+IMPOSSIBLE_SDK = "99.0.0"
+
+
+def runtime_pattern(html: str) -> str | None:
+    m = re.search(r"exposdk(?:%3A|:)([0-9]+\.[0-9]+\.[0-9]+)", html)
+    return m.group(1) if m else None
+
+
+def default_runtime(code: str) -> str | None:
+    """The SDK Snack falls back to -- i.e. the one Expo Go can actually run.
+
+    Only a saved Snack's page renders a runtime-version, so this saves a probe
+    against an impossible SDK. Snack cannot bind it, falls back to its default,
+    and renders that default in the page's deep link.
+    """
     try:
-        data = json.loads(get(VERSIONS_ENDPOINT))
-        versions = list((data.get("data") or data).get("sdkVersions", {}))
-    except Exception:
-        versions = []
-    versions.sort(key=lambda v: [int(p) for p in v.split(".")], reverse=True)
-    # Newest first; Expo's Snack runtime usually trails the newest SDK by a
-    # release or two, so a handful of attempts is plenty.
-    return versions[:5] or ["54.0.0"]
+        probe_id = save(code, IMPOSSIBLE_SDK)
+    except urllib.error.HTTPError:
+        return None
+    return runtime_pattern(get(SNACK_PAGE.format(id=probe_id)))
 
 
 def save(code: str, sdk: str) -> str:
@@ -126,27 +144,29 @@ def main() -> int:
     source = re.search(r"https://raw\.githubusercontent\.com[^'\"]*snapshot\.json", code)
     print(f"Bundle: {len(code):,} bytes, reading {source.group(0) if source else 'UNKNOWN'}")
 
-    for sdk in candidate_sdks(args.sdk):
-        print(f"Saving against SDK {sdk} ... ", end="", flush=True)
-        try:
-            snack_id = save(code, sdk)
-        except urllib.error.HTTPError as exc:
-            print(f"save failed ({exc.code})")
-            continue
+    sdk = args.sdk or default_runtime(code)
+    if not sdk:
+        print("Could not determine the Snack runtime version.", file=sys.stderr)
+        return 1
+    print(f"Snack runtime: SDK {sdk}")
 
-        link = deep_link(snack_id)
-        if not link:
-            print(f"saved as {snack_id} but the runtime will not bind it")
-            continue
+    snack_id = save(code, sdk)
+    link = deep_link(snack_id)
+    if not link:
+        print(f"Saved as {snack_id}, but the runtime will not bind it.", file=sys.stderr)
+        return 1
 
-        print("ok")
-        print(f"\n  Snack id : {snack_id}")
-        print(f"  Tap link : {link}")
-        print(f"  Web link : {SNACK_PAGE.format(id=snack_id)}")
-        return 0
+    # The rendered runtime is what the phone will be asked for. If it drifted
+    # from what we saved, the tap would fail on the device rather than here.
+    served = runtime_pattern(link)
+    if served != sdk:
+        print(f"Snack serves SDK {served}, not the {sdk} it was saved with.", file=sys.stderr)
+        return 1
 
-    print("\nNo SDK version produced a bindable Snack.", file=sys.stderr)
-    return 1
+    print(f"\n  Snack id : {snack_id}")
+    print(f"  Tap link : {link}")
+    print(f"  Web link : {SNACK_PAGE.format(id=snack_id)}")
+    return 0
 
 
 if __name__ == "__main__":

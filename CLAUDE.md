@@ -32,8 +32,8 @@ changed nothing.** Which link depends on whether the app moved:
 ### Standing link
 
 ```
-exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A55.0.0&channel-name=production&snack=_l78c1v7XG5_cfDeKl0Zb
-https://snack.expo.dev/_l78c1v7XG5_cfDeKl0Zb
+exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=v2ypATb7efo9TtyA4D6OY
+https://snack.expo.dev/v2ypATb7efo9TtyA4D6OY
 ```
 
 Keep this block current — it is the answer to "what do I tap right now".
@@ -66,12 +66,27 @@ Until it exists, the nightly refresh fails and the app serves a frozen snapshot.
 
 ## Snack publishing, the part that bites
 
-Expo serves a Snack runtime for only some SDK versions, and saving against an
-unsupported one **fails silently** — the save returns an id and the page loads,
-but the deep link comes back without its `snack=` parameter and the phone has
-nothing to open. `publish_snack.py` catches this by reading the deep link back
-off the Snack's own page and walking SDK versions downward until one binds.
-Trust that check; never hand over a link whose `snack=` parameter is missing.
+The SDK version is the whole difficulty, and it fails in two different ways.
+
+**It can fail silently on Snack's side.** Saving against an SDK with no Snack
+runtime still returns an id and still loads a page, but the deep link comes
+back without its `snack=` parameter and the phone has nothing to open.
+
+**It can also bind on Snack and still be wrong for the phone.** An SDK newer
+than the installed Expo Go produces a link that opens Expo Go and then dies on
+"Project is incompatible with this version of Expo Go". This is the one that
+actually shipped a broken link: SDK 55 bound perfectly server-side and was
+useless on the device.
+
+So **"newest version that binds" is the wrong target.** The right one is the
+runtime Snack itself falls back to, which is what its Expo Go integration ships
+against. Only a *saved* Snack's page renders that value, so `publish_snack.py`
+saves a probe against an impossible SDK, reads the fallback runtime off its
+page, and publishes against exactly that — then asserts the link it hands back
+carries both `snack=<id>` and the runtime it asked for. Do not replace that
+probe with the versions API; that API lists SDKs Expo Go cannot run.
+
+Never hand over a link that has not passed both assertions.
 
 ## Repository shape
 
