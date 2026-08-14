@@ -73,6 +73,8 @@ export default function App() {
   const watchList = useRef(null);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const indexRef = useRef(index);
+  indexRef.current = index;
   // Universes whose fetch failed, so the watchlist hydration below gives up on
   // them instead of retrying in a loop.
   const skipHydrate = useRef(new Set());
@@ -107,16 +109,31 @@ export default function App() {
     const url = typeof urlOverride === 'string' ? urlOverride : settingsRef.current.sourceUrl;
     setRefreshing(true);
     try {
+      // The table outweighs the index a thousandfold, so start it downloading
+      // now on the guess that the fresh index still lists the open universe
+      // under the same file. That holds on every launch except a source swap,
+      // and the megabyte of history is in flight during the index round-trip
+      // instead of queueing behind it. On the very first run there is no index
+      // to guess from, but the default universe's file is a known constant.
+      const wanted = settingsRef.current.universeKey;
+      const guess = findUniverse(indexRef.current, wanted)
+        || (wanted === 'all' ? { key: 'all', title: 'All', scope: 'all', file: 'snapshot.json' } : null);
+      const guessed = guess ? fetchUniverse(url, guess).catch(() => null) : null;
+
       const listing = await fetchIndex(url);
       setIndex(listing.index);
 
       // A source swapped under our feet may not carry the universe that was
       // open; fall back to whatever it lists first rather than fetching a 404.
-      const wanted = settingsRef.current.universeKey;
       const universe = findUniverse(listing.index, wanted);
       if (!universe) throw new Error('That source lists no universes');
 
-      const result = await fetchUniverse(url, universe);
+      // The guess only counts when the fresh index agrees where that universe
+      // lives; otherwise fetch what the index actually says.
+      let result = guess && universe.key === guess.key && universe.file === guess.file
+        ? await guessed
+        : null;
+      if (!result) result = await fetchUniverse(url, universe);
       store(universe.key, result.table);
       if (universe.key !== wanted) {
         setSettings((prev) => {
