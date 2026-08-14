@@ -45,8 +45,8 @@ NATIVE_MODULES = "https://exp.host/--/api/v2/sdks/{sdk}/native-modules"
 BUNDLE = "app/snack/App.js"
 
 DEPENDENCIES = ["react-native-svg", "@react-native-async-storage/async-storage", "expo-haptics"]
-NAME = "Top 100"
-DESCRIPTION = "Top 100 US stocks by market cap, ranked daily"
+NAME = "Top 300"
+DESCRIPTION = "Top 300 US stocks and the top 100 per sector, ranked"
 
 UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)"
 
@@ -159,7 +159,7 @@ def main() -> int:
         print(f"{BUNDLE} is missing -- run scripts/bundle_snack.sh first.", file=sys.stderr)
         return 1
 
-    source = re.search(r"https://raw\.githubusercontent\.com[^'\"]*snapshot\.json", code)
+    source = re.search(r"https://raw\.githubusercontent\.com[^'\"]*/data/", code)
     print(f"Bundle: {len(code):,} bytes, reading {source.group(0) if source else 'UNKNOWN'}")
 
     sdk = args.sdk or default_runtime(code)
