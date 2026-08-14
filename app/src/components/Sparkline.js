@@ -1,5 +1,5 @@
 import React from 'react';
-import Svg, { Polyline } from 'react-native-svg';
+import { Polyline, Svg } from './svg';
 import { C } from '../theme';
 
 /**

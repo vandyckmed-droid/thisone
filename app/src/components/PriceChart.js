@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import Svg, { Circle, Defs, Line, LinearGradient, Path, Stop } from 'react-native-svg';
+import { Circle, Defs, Line, LinearGradient, Path, Stop, Svg } from './svg';
 import { tick } from '../haptics';
 import { C, MONO, T, fmtPrice } from '../theme';
 
