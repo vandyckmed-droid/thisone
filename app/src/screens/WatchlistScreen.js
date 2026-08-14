@@ -84,7 +84,7 @@ export default function WatchlistScreen({
         ListEmptyComponent={
           <Empty
             title="NOTHING TRACKED YET"
-            hint="Open any ticker and tap WATCH, or press and hold a row on the Ranks screen."
+            hint="Tap the + beside any row on the Ranks screen, or open a ticker and tap WATCH."
           />
         }
         contentContainerStyle={rows.length ? null : { flexGrow: 1 }}

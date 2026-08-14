@@ -611,21 +611,18 @@ function TickerRow({ ticker, position, sort, settings, starred, onPress, onToggl
       tap();
       onPress(ticker);
     }}
-    onLongPress={() => {
-      (starred ? undo : confirm)();
-      onToggleStar(ticker.symbol);
-    }}
-    style={({ pressed }) => [styles2.row, pressed && styles2.rowPressed]}
+    style={({ pressed }) => [
+      styles2.row,
+      starred && styles2.rowStarred,
+      pressed && styles2.rowPressed
+    ]}
   >
       <Text2 style={styles2.position}>{position}</Text2>
 
       <Logo uri={ticker.logo} symbol={ticker.symbol} enabled={settings.showLogos} />
 
       <View2 style={styles2.identity}>
-        <View2 style={styles2.symbolLine}>
-          <Text2 style={styles2.symbol} numberOfLines={1}>{ticker.symbol}</Text2>
-          {starred && <Text2 style={styles2.star}>★</Text2>}
-        </View2>
+        <Text2 style={styles2.symbol} numberOfLines={1}>{ticker.symbol}</Text2>
         <Text2 style={styles2.name} numberOfLines={1}>{ticker.name}</Text2>
       </View2>
 
@@ -642,6 +639,29 @@ function TickerRow({ ticker, position, sort, settings, starred, onPress, onToggl
           {formatMetric(metricIsCap ? "pct" : sort.format, metricValue)}
         </Text2>
       </View2>
+
+      {
+    /* Nested inside the row's Pressable, but it claims its own touches, so
+       tapping the button never opens the ticker. */
+  }
+      <Pressable2
+    onPress={() => {
+      (starred ? undo : confirm)();
+      onToggleStar(ticker.symbol);
+    }}
+    hitSlop={10}
+    accessibilityRole="button"
+    accessibilityLabel={starred ? `Remove ${ticker.symbol} from watchlist` : `Add ${ticker.symbol} to watchlist`}
+    style={({ pressed }) => [
+      styles2.watch,
+      starred && styles2.watchOn,
+      pressed && styles2.watchPressed
+    ]}
+  >
+        <Text2 style={[styles2.watchGlyph, starred && styles2.watchGlyphOn]}>
+          {starred ? "\u2713" : "+"}
+        </Text2>
+      </Pressable2>
     </Pressable2>;
 }
 var styles2 = StyleSheet2.create({
@@ -649,9 +669,18 @@ var styles2 = StyleSheet2.create({
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 10,
-    paddingHorizontal: S.gutter,
+    paddingRight: S.gutter,
+    paddingLeft: S.gutter - 2,
     borderBottomWidth: S.hairline,
-    borderBottomColor: C.lineSoft
+    borderBottomColor: C.lineSoft,
+    // The edge is always present and usually invisible, so marking a row
+    // tints it rather than nudging every column two pixels sideways.
+    borderLeftWidth: 2,
+    borderLeftColor: "transparent"
+  },
+  rowStarred: {
+    borderLeftColor: C.acid,
+    backgroundColor: "rgba(200,255,0,0.05)"
   },
   rowPressed: { backgroundColor: C.surface },
   position: {
@@ -670,14 +699,27 @@ var styles2 = StyleSheet2.create({
   logoFallback: { alignItems: "center", justifyContent: "center" },
   logoLetter: { color: C.dim, fontFamily: MONO, fontSize: 12 },
   identity: { flex: 1, paddingRight: 8 },
-  symbolLine: { flexDirection: "row", alignItems: "center" },
   symbol: { color: C.text, fontFamily: MONO, fontSize: 13, letterSpacing: 0.5 },
-  star: { color: C.acid, fontSize: 10, marginLeft: 5 },
   name: { color: C.faint, fontSize: 10, marginTop: 2 },
   spark: { width: 56, marginRight: 10 },
   numbers: { alignItems: "flex-end", minWidth: 74 },
   price: { color: C.text, fontFamily: MONO, fontSize: 13 },
-  metric: { fontFamily: MONO, fontSize: 11, marginTop: 2 }
+  metric: { fontFamily: MONO, fontSize: 11, marginTop: 2 },
+  watch: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    marginLeft: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: S.hairline,
+    borderColor: C.line,
+    backgroundColor: C.surface
+  },
+  watchOn: { borderColor: C.acid, backgroundColor: "transparent" },
+  watchPressed: { borderColor: C.faint },
+  watchGlyph: { color: C.dim, fontSize: 15, lineHeight: 18, marginTop: -1 },
+  watchGlyphOn: { color: C.acid, fontSize: 13 }
 });
 var TickerRow_default = React3.memo(TickerRow);
 
@@ -1463,7 +1505,7 @@ function WatchlistScreen({
     refreshControl={<RefreshControl2 refreshing={refreshing} onRefresh={onRefresh} tintColor={C.acid} />}
     ListEmptyComponent={<Empty
       title="NOTHING TRACKED YET"
-      hint="Open any ticker and tap WATCH, or press and hold a row on the Ranks screen."
+      hint="Tap the + beside any row on the Ranks screen, or open a ticker and tap WATCH."
     />}
     contentContainerStyle={rows.length ? null : { flexGrow: 1 }}
   />
