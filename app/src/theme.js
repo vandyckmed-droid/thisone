@@ -53,8 +53,10 @@ export const fmtCap = (n) => {
 
 export const fmtPrice = (n) => {
   if (n === null || n === undefined) return '—';
-  if (n >= 1000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
-  return n.toFixed(2);
+  // Cents stay until they stop carrying information: LLY reads 1,209.85 rather
+  // than a rounded 1,210, while a five-figure share price drops them.
+  if (n >= 10000) return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
 export const fmtPct = (n, digits = 2) => {

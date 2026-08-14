@@ -3,14 +3,13 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import TickerRow from '../components/TickerRow';
-import { Banner, Chip, Empty } from '../components/UI';
+import { Banner, Chip, ChipRow, Empty } from '../components/UI';
 import { SORTS, arrange, sectorsOf, sortByKey } from '../data';
 import { C, MONO, S } from '../theme';
 
@@ -75,11 +74,7 @@ export default function RanksScreen({
         style={styles.search}
       />
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chips}
-      >
+      <ChipRow>
         {SORTS.map((s) => (
           <Chip
             key={s.key}
@@ -88,13 +83,9 @@ export default function RanksScreen({
             onPress={() => pickSort(s.key)}
           />
         ))}
-      </ScrollView>
+      </ChipRow>
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.chips}
-      >
+      <ChipRow>
         {sectors.map((name) => (
           <Chip
             key={name}
@@ -104,7 +95,7 @@ export default function RanksScreen({
             onPress={() => setSector(name)}
           />
         ))}
-      </ScrollView>
+      </ChipRow>
 
       <View style={styles.columns}>
         <Text style={styles.colLeft}>#  TICKER</Text>
@@ -174,7 +165,6 @@ const styles = StyleSheet.create({
     fontFamily: MONO,
     fontSize: 12,
   },
-  chips: { paddingHorizontal: S.gutter, paddingBottom: 9 },
   columns: {
     flexDirection: 'row',
     justifyContent: 'space-between',

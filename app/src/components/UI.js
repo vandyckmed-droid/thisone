@@ -1,6 +1,28 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { C, MONO, S } from '../theme';
+
+/**
+ * Horizontally scrolling row of chips.
+ *
+ * The fixed height is load-bearing. A horizontal ScrollView placed in a flex
+ * column gets compressed by whatever else is competing for the same vertical
+ * space -- here the list below it -- which crops the chips mid-glyph and laps
+ * one row over the next. Pinning the height and refusing to grow or shrink
+ * keeps each row exactly one chip tall.
+ */
+export function ChipRow({ children }) {
+  return (
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.chipRow}
+      contentContainerStyle={styles.chipRowContent}
+    >
+      {children}
+    </ScrollView>
+  );
+}
 
 /** Selectable pill used for sort keys, sectors and chart ranges. */
 export function Chip({ label, active, onPress, compact }) {
@@ -65,6 +87,10 @@ export function Empty({ title, hint }) {
 }
 
 const styles = StyleSheet.create({
+  // 27px of chip (13 line + 12 padding + 2 border) with room to spare.
+  chipRow: { flexGrow: 0, flexShrink: 0, height: 30, marginBottom: 9 },
+  chipRowContent: { paddingHorizontal: S.gutter, alignItems: 'center' },
+
   chip: {
     paddingHorizontal: 11,
     paddingVertical: 6,
@@ -77,7 +103,9 @@ const styles = StyleSheet.create({
   chipCompact: { paddingHorizontal: 9, paddingVertical: 5 },
   chipPressed: { borderColor: C.faint },
   chipActive: { backgroundColor: C.acid, borderColor: C.acid },
-  chipText: { color: C.dim, fontFamily: MONO, fontSize: 10, letterSpacing: 0.8 },
+  // An explicit lineHeight keeps Menlo's ascenders from being clipped by the
+  // pill once letterSpacing is applied.
+  chipText: { color: C.dim, fontFamily: MONO, fontSize: 10, lineHeight: 13, letterSpacing: 0.8 },
   chipTextActive: { color: C.bg },
 
   stat: { paddingVertical: 9, paddingRight: 10 },

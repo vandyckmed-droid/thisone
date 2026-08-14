@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { FlatList, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import TickerRow from '../components/TickerRow';
-import { Chip, Empty } from '../components/UI';
+import { Chip, ChipRow, Empty } from '../components/UI';
 import { SORTS, arrange, sortByKey } from '../data';
 import { C, MONO, S, fmtPct, tone } from '../theme';
 
@@ -52,11 +52,7 @@ export default function WatchlistScreen({
       </View>
 
       {held.length > 0 && (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chips}
-        >
+        <ChipRow>
           {SORTS.map((s) => (
             <Chip
               key={s.key}
@@ -65,7 +61,7 @@ export default function WatchlistScreen({
               onPress={() => setSortKey(s.key)}
             />
           ))}
-        </ScrollView>
+        </ChipRow>
       )}
 
       <FlatList
@@ -112,5 +108,4 @@ const styles = StyleSheet.create({
   avgBox: { alignItems: 'flex-end' },
   avgLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1 },
   avgValue: { fontFamily: MONO, fontSize: 15, marginTop: 3 },
-  chips: { paddingHorizontal: S.gutter, paddingBottom: 10 },
 });
