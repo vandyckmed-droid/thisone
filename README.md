@@ -158,8 +158,9 @@ ticker, fetched concurrently with retry and backoff.
 
 **Computes metrics.** Returns over 1W/1M/3M/6M/YTD/1Y/2Y, annualised
 volatility over 30d/90d/1Y, 1-year max drawdown, a return-per-unit-of-risk
-ratio, a momentum score blending the 3/6/9/12-month returns that each stop a
-month short of today, and a rank for each of those across the universe. Rank 1 is always the desirable end, including for volatility, where
+ratio, a momentum score blending the 3/6/9/12-month returns that each stop
+short of today by a share of their own length, and a rank for each of those
+across the universe. Rank 1 is always the desirable end, including for volatility, where
 it means the *lowest*.
 
 A window only produces a number when it is genuinely filled. A company that
@@ -202,6 +203,7 @@ previous snapshot left untouched                     exit 1, snapshot unchanged
 | `SECTOR_CAP_PCT` | `20` | Ceiling per sector, as a share of the universe |
 | `SECTOR_FLOOR_PCT` | `4` | Floor per sector, as a share of the universe |
 | `SELECTION` | `collar` | Or `lookahead` for the earlier method |
+| `MOMENTUM_SKIP_RATIO` | `0.08` | Share of each momentum window left off its recent end; `0` disables |
 | `HISTORY_DAYS` | `760` | Calendar days of history requested |
 | `MAX_WORKERS` | `8` | Concurrent API requests |
 | `OUTPUT` | `data/snapshot.json` | Where to write |

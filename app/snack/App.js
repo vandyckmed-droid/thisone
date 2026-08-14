@@ -1232,6 +1232,12 @@ var styles5 = StyleSheet5.create({
 });
 
 // app/src/screens/TickerScreen.js
+var MOMENTUM_ROWS = [
+  ["3m", "3 MONTH"],
+  ["6m", "6 MONTH"],
+  ["9m", "9 MONTH"],
+  ["12m", "12 MONTH"]
+];
 var RETURN_ROWS = [
   ["1w", "1 WEEK"],
   ["1m", "1 MONTH"],
@@ -1242,6 +1248,7 @@ var RETURN_ROWS = [
 ];
 function TickerScreen({ ticker, snapshot, starred, onBack, onToggleStar }) {
   const [range, setRange] = useState6("1Y");
+  const skips = (snapshot.momentum || {}).skips || {};
   const width = Dimensions.get("window").width - S.gutter * 2;
   const sessions = (RANGES.find((r) => r.key === range) || RANGES[3]).sessions;
   const points = useMemo3(
@@ -1349,11 +1356,47 @@ function TickerScreen({ ticker, snapshot, starred, onBack, onToggleStar }) {
   />
       </View6>
 
+      {
+    /* The windows the score is built from, with the skip stated on each
+       rather than left to the disclosure. A reader who never opens the
+       explanation should still never mistake these for the trailing
+       returns above. */
+  }
+      <View6 style={styles6.windows}>
+        <View6 style={styles6.windowHead}>
+          <Text6 style={styles6.windowHeadText}>WINDOW</Text6>
+          <Text6 style={styles6.windowHeadText}>SKIPPED</Text6>
+          <Text6 style={[styles6.windowHeadText, styles6.windowHeadRight]}>RETURN</Text6>
+        </View6>
+        {MOMENTUM_ROWS.map(([key, label]) => {
+    const skip = skips[key];
+    const value = (ticker.momentumReturns || {})[key];
+    return <View6 key={key} style={styles6.windowRow}>
+              <Text6 style={styles6.windowLabel}>{label}</Text6>
+              <Text6 style={styles6.windowSkip}>
+                {skip === void 0 ? "\u2014" : skip === 0 ? "none" : `last ${skip}d`}
+              </Text6>
+              <Text6 style={[styles6.windowValue, { color: tone(value) }]}>{fmtPct(value)}</Text6>
+            </View6>;
+  })}
+      </View6>
+
+      <Text6 style={styles6.windowNote}>
+        These stop short of today. The RETURNS above run to the latest close — momentum is the
+        only figure here that skips anything.
+      </Text6>
+
       <Disclosure label="HOW MOMENTUM WORKS ›">
         <Text6 style={styles6.prose}>
-          Four returns are measured for every company: 3, 6, 9 and 12 months. Each one stops a month
-          short of today rather than running up to the last close — very short-term moves tend to
-          reverse rather than persist, so the most recent month is skipped instead of counted.
+          Four returns are measured for every company: 3, 6, 9 and 12 months. Each stops short of
+          today rather than running to the last close, because very short-term moves tend to reverse
+          rather than persist — so the most recent stretch is skipped instead of counted.
+        </Text6>
+        <Text6 style={styles6.prose}>
+          The skip scales with the window at 20 sessions per 250, so the 12-month figure leaves out
+          the last 20 sessions and the 3-month one only the last 5. A single fixed month would take
+          a twelfth off the yearly window but a third off the quarterly one — a far heavier hand on
+          the short end than the long.
         </Text6>
         <Text6 style={styles6.prose}>
           This ticker is then ranked against the other {snapshot.universeSize - 1} on each of those
@@ -1422,6 +1465,30 @@ var styles6 = StyleSheet6.create({
   chartHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
   chartLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1.4 },
   chartChange: { fontFamily: MONO, fontSize: 13 },
+  windows: {
+    marginTop: 12,
+    borderTopWidth: S.hairline,
+    borderTopColor: C.line
+  },
+  windowHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingTop: 10,
+    paddingBottom: 4
+  },
+  windowHeadText: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1, flex: 1 },
+  windowHeadRight: { textAlign: "right" },
+  windowRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 7,
+    borderTopWidth: S.hairline,
+    borderTopColor: C.lineSoft
+  },
+  windowLabel: { color: C.dim, fontFamily: MONO, fontSize: 11, flex: 1 },
+  windowSkip: { color: C.faint, fontFamily: MONO, fontSize: 11, flex: 1 },
+  windowValue: { fontFamily: MONO, fontSize: 12, flex: 1, textAlign: "right" },
+  windowNote: { color: C.faint, fontSize: 10, lineHeight: 16, marginTop: 10 },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
