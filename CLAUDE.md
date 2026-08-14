@@ -32,8 +32,8 @@ changed nothing.** Which link depends on whether the app moved:
 ### Standing link
 
 ```
-exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=CSu2ZsyIAm0enXaPJWo23
-https://snack.expo.dev/CSu2ZsyIAm0enXaPJWo23
+exp://u.expo.dev/933fd9c0-1666-11e7-afca-d980795c5824?runtime-version=exposdk%3A54.0.0&channel-name=production&snack=_6V-MM_zwvNkkbByXEdiU
+https://snack.expo.dev/_6V-MM_zwvNkkbByXEdiU
 ```
 
 Keep this block current — it is the answer to "what do I tap right now".
@@ -87,6 +87,17 @@ carries both `snack=<id>` and the runtime it asked for. Do not replace that
 probe with the versions API; that API lists SDKs Expo Go cannot run.
 
 Never hand over a link that has not passed both assertions.
+
+**Pin dependencies to the SDK, never `*`.** `react-native-svg`, AsyncStorage and
+`expo-haptics` all ship inside Expo Go, but a `*` version spec does not match
+the bundled copy, so Snack hands the package to Snackager to build from npm
+instead — and that fails on the device with "Unable to fetch module
+react-native-svg@* for ios" after the app has already started rendering.
+`publish_snack.py` reads the real versions from
+`exp.host/--/api/v2/sdks/<sdk>/native-modules` and refuses to publish if any
+dependency has no version published for that SDK. Snackager is unreachable from
+this environment, so a bad pin cannot be caught here — it surfaces on the
+phone.
 
 ## Repository shape
 
