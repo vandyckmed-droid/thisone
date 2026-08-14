@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { DEFAULT_SOURCE } from './source';
 
 // Everything the app remembers lives here. No account, no server: the phone
 // owns the watchlist and settings, and the snapshot cache is just a copy of
@@ -9,8 +10,7 @@ const K = {
   snapshot: '@top100/snapshot',
 };
 
-export const DEFAULT_SOURCE =
-  'https://raw.githubusercontent.com/vandyckmed-droid/thisone/main/data/snapshot.json';
+export { DEFAULT_SOURCE };
 
 export const DEFAULT_SETTINGS = {
   sourceUrl: DEFAULT_SOURCE,
