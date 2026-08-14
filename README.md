@@ -158,9 +158,15 @@ ticker, fetched concurrently with retry and backoff.
 
 **Computes metrics.** Returns over 1W/1M/3M/6M/YTD/1Y/2Y, annualised
 volatility over 30d/90d/1Y, 1-year max drawdown, a return-per-unit-of-risk
-ratio, a momentum score blending the 3/6/9/12-month returns that each stop
-short of today by a share of their own length, and a rank for each of those
-across the universe. Rank 1 is always the desirable end, including for volatility, where
+ratio, and a momentum score blending the 3/6/9/12-month returns, with a rank
+for each across the universe.
+
+Every window long enough to afford it stops short of today by a share of its own
+length -- 20 sessions per 250, so 5 off a quarter and 40 off two years. It is all
+or nothing: skipping inside momentum but not in the returns table would put two
+numbers labelled "6 month" on one screen measuring different things. Windows
+below a quarter skip nothing, and `MOMENTUM_SKIP_RATIO=0` turns it off
+everywhere. Rank 1 is always the desirable end, including for volatility, where
 it means the *lowest*.
 
 A window only produces a number when it is genuinely filled. A company that
@@ -203,8 +209,8 @@ previous snapshot left untouched                     exit 1, snapshot unchanged
 | `SECTOR_CAP_PCT` | `20` | Ceiling per sector, as a share of the universe |
 | `SECTOR_FLOOR_PCT` | `4` | Floor per sector, as a share of the universe |
 | `SELECTION` | `collar` | Or `lookahead` for the earlier method |
-| `MOMENTUM_SKIP_RATIO` | `0.08` | Share of each momentum window left off its recent end; `0` disables |
-| `HISTORY_DAYS` | `760` | Calendar days of history requested |
+| `MOMENTUM_SKIP_RATIO` | `0.08` | Share of **every** return window left off its recent end; `0` disables |
+| `HISTORY_DAYS` | `850` | Calendar days requested; must cover the longest window plus its skip |
 | `MAX_WORKERS` | `8` | Concurrent API requests |
 | `OUTPUT` | `data/snapshot.json` | Where to write |
 
@@ -255,7 +261,8 @@ only a bare array of closes rather than repeating 523 date strings.
 
 `history` is padded with `null` before a ticker's first session, so a recent
 listing charts from its IPO instead of dragging a flat line back through two
-years it never traded. At 300 tickers the file is about **1.2 MB**.
+years it never traded. At 300 tickers over 584 sessions the file is about
+**1.37 MB**.
 
 ---
 

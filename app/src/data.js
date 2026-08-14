@@ -5,7 +5,7 @@ import { loadCachedSnapshot, saveCachedSnapshot } from './storage';
 // precomputed rank the pipeline already worked out for us.
 export const SORTS = [
   { key: 'marketCap', label: 'MKT CAP', short: 'CAP', rank: 'marketCap', better: 'high', value: (t) => t.marketCap, format: 'cap' },
-  { key: 'change', label: '1 DAY', short: '1D', rank: null, better: 'high', value: (t) => t.changePct, format: 'pct' },
+  { key: 'change', label: '1 DAY', short: '1D', rank: 'change', better: 'high', value: (t) => t.changePct, format: 'pct' },
   { key: 'r1w', label: '1 WEEK', short: '1W', rank: 'return_1w', better: 'high', value: (t) => t.returns['1w'], format: 'pct' },
   { key: 'r1m', label: '1 MONTH', short: '1M', rank: 'return_1m', better: 'high', value: (t) => t.returns['1m'], format: 'pct' },
   { key: 'r3m', label: '3 MONTH', short: '3M', rank: 'return_3m', better: 'high', value: (t) => t.returns['3m'], format: 'pct' },
@@ -97,6 +97,11 @@ export function arrange(tickers, { sortKey, query, sector, direction = 'desc' })
  * has three names and Technology thirty, which a row of equal-sized chips
  * could never convey.
  */
+/** The sort columns as sheet options, so Settings needs no chip cloud. */
+export function sortOptions() {
+  return SORTS.map((s) => ({ value: s.key, label: s.label }));
+}
+
 export function sectorOptions(tickers) {
   const counts = new Map();
   for (const ticker of tickers) {

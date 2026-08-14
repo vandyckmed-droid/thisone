@@ -30,7 +30,8 @@ SECTOR_FLOOR_PCT        least any sector present may hold (default 4)
 LOOKAHEAD               candidates the lookahead method weighs (default 5)
 MOMENTUM_SKIP_RATIO     share of each momentum window left off its recent end
                         (default 0.08 = 20 sessions per 250; 0 disables it)
-HISTORY_DAYS            calendar days of history to request (default 760)
+HISTORY_DAYS            calendar days of history to request (default 850 --
+                        must cover the longest window plus its skip)
 OUTPUT                  snapshot path (default data/snapshot.json)
 MAX_WORKERS             concurrent API requests (default 8)
 """
@@ -73,7 +74,7 @@ SECTOR_CAP_PCT = float(os.environ.get("SECTOR_CAP_PCT", "20"))
 SECTOR_FLOOR_PCT = float(os.environ.get("SECTOR_FLOOR_PCT", "4"))
 SELECTION = os.environ.get("SELECTION", "collar")
 LOOKAHEAD = int(os.environ.get("LOOKAHEAD", "5"))
-HISTORY_DAYS = int(os.environ.get("HISTORY_DAYS", "760"))
+HISTORY_DAYS = int(os.environ.get("HISTORY_DAYS", "850"))
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "8"))
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -99,7 +100,7 @@ MIN_CALENDAR_SESSIONS = 200
 TRADING_DAYS_PER_YEAR = 252
 WINDOWS = {"1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252, "2y": 504}
 
-# Momentum ignores the most recent stretch of each window, because very
+# Every return window ignores the most recent stretch of itself, because very
 # short-term moves tend to reverse rather than persist, so a window running
 # right up to today measures noise sitting on top of the trend.
 #
@@ -108,10 +109,14 @@ WINDOWS = {"1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252, "2y": 504}
 # three. A fixed month takes a twelfth off the yearly window but a third off
 # the quarterly one, which is a far heavier hand on the short end than the
 # long. Proportional skipping treats every horizon the same way.
-MOMENTUM_SKIP_RATIO = float(os.environ.get("MOMENTUM_SKIP_RATIO", 20 / 250))
+#
+# It is all or nothing. Skipping inside momentum but not in the returns table
+# would mean two numbers labelled "6 month" on one screen measuring different
+# things, so the ratio governs every window or none of them.
+SKIP_RATIO = float(os.environ.get("MOMENTUM_SKIP_RATIO", 20 / 250))
 # Below a quarter there is too little window left to be worth measuring once a
 # proportional bite is taken out of it, so short windows skip nothing at all.
-MOMENTUM_MIN_SKIP_WINDOW = 63
+MIN_SKIP_WINDOW = 63
 MOMENTUM_WINDOWS = {"3m": 63, "6m": 126, "9m": 189, "12m": 252}
 
 # Names that betray a note, bond, preferred or depositary line rather than a
@@ -450,12 +455,8 @@ def select_balanced(candidates: list[dict[str, Any]], counts: dict[str, int],
 # --------------------------------------------------------------------------
 
 def pct_change(closes: list[float], sessions: int) -> float | None:
-    if len(closes) <= sessions:
-        return None
-    past, now = closes[-1 - sessions], closes[-1]
-    if past <= 0:
-        return None
-    return (now / past - 1) * 100
+    """Return over `sessions`, stopping short of today by this window's skip."""
+    return pct_change_skip(closes, sessions, window_skip(sessions))
 
 
 def _window(closes: list[float], sessions: int) -> list[float] | None:
@@ -470,11 +471,11 @@ def _window(closes: list[float], sessions: int) -> list[float] | None:
     return window
 
 
-def momentum_skip(sessions: int) -> int:
-    """Sessions to leave off the end of a `sessions`-long momentum window."""
-    if sessions < MOMENTUM_MIN_SKIP_WINDOW:
+def window_skip(sessions: int) -> int:
+    """Sessions to leave off the recent end of a `sessions`-long window."""
+    if sessions < MIN_SKIP_WINDOW or SKIP_RATIO <= 0:
         return 0
-    return round(sessions * MOMENTUM_SKIP_RATIO)
+    return round(sessions * SKIP_RATIO)
 
 
 def pct_change_skip(closes: list[float], sessions: int, skip: int) -> float | None:
@@ -511,14 +512,23 @@ def max_drawdown(closes: list[float], sessions: int) -> float | None:
 
 
 def ytd_change(dated: list[tuple[str, float]]) -> float | None:
-    """Measured from the final close of the previous calendar year."""
+    """From the final close of the previous calendar year, skip applied.
+
+    The skip is sized off however many sessions the year has run so far, so
+    early January skips nothing and a full year skips its twentieth.
+    """
     if not dated:
         return None
     this_year = dated[-1][0][:4]
-    base = [c for d, c in dated if d[:4] < this_year]
+    base = [close for day, close in dated if day[:4] < this_year]
     if not base or base[-1] <= 0:
         return None
-    return (dated[-1][1] / base[-1] - 1) * 100
+
+    skip = window_skip(len(dated) - len(base))
+    end = len(dated) - 1 - skip
+    if end < len(base):          # the skip swallowed the whole year so far
+        return None
+    return (dated[end][1] / base[-1] - 1) * 100
 
 
 def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
@@ -548,7 +558,7 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
         # The skip-a-month windows momentum is built from, kept in the snapshot
         # so the score can be checked rather than taken on trust.
         "momentumReturns": {
-            label: _round(pct_change_skip(closes, n, momentum_skip(n)))
+            label: _round(pct_change_skip(closes, n, window_skip(n)))
             for label, n in MOMENTUM_WINDOWS.items()
         },
         "volatility": {
@@ -583,6 +593,10 @@ def apply_rankings(tickers: list[dict[str, Any]]) -> None:
         ticker["ranks"] = {}
 
     rank_by("marketCap", lambda t: t["marketCap"], descending=True)
+    # The day's move is a sort column too, so it needs a global rank like the
+    # rest -- otherwise that column has no honest number to put beside a row
+    # once a filter is applied.
+    rank_by("change", lambda t: t["changePct"], descending=True)
     for horizon in ("1w", "1m", "3m", "6m", "ytd", "1y", "2y"):
         rank_by(f"return_{horizon}", lambda t, h=horizon: t["returns"].get(h), descending=True)
     rank_by("volatility", lambda t: t["volatility"]["1y"], descending=False)
@@ -740,6 +754,7 @@ def build_snapshot() -> dict[str, Any]:
     log("sectors: " + ", ".join(f"{name} {n}" for name, n in spread))
 
     latest = calendar[-1] if calendar else None
+    ytd_sessions = sum(1 for day in calendar if latest and day[:4] == latest[:4])
     return {
         "schema": 1,
         "generatedAt": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -761,10 +776,21 @@ def build_snapshot() -> dict[str, Any]:
         },
         # Published so the score can be checked rather than taken on trust:
         # each window and how much of its recent end was left out.
+        # Published so every figure can be checked rather than trusted: how
+        # much of its recent end each window leaves out.
+        "skip": {
+            "ratio": round(SKIP_RATIO, 4),
+            "minWindow": MIN_SKIP_WINDOW,
+            "returns": {
+                **{k: window_skip(n) for k, n in WINDOWS.items()},
+                "ytd": window_skip(ytd_sessions),
+            },
+            "momentum": {k: window_skip(n) for k, n in MOMENTUM_WINDOWS.items()},
+        },
         "momentum": {
             "windows": dict(MOMENTUM_WINDOWS),
-            "skips": {k: momentum_skip(n) for k, n in MOMENTUM_WINDOWS.items()},
-            "skipRatio": round(MOMENTUM_SKIP_RATIO, 4),
+            "skips": {k: window_skip(n) for k, n in MOMENTUM_WINDOWS.items()},
+            "skipRatio": round(SKIP_RATIO, 4),
         },
         "sessions": len(calendar),
         "dates": calendar,

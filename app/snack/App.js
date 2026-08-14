@@ -2,15 +2,8 @@
 // Source of truth is app/App.js and app/src/. Regenerate after any change.
 
 // app/App.js
-import React9, { useCallback, useEffect, useMemo as useMemo5, useRef, useState as useState8 } from "react";
-import {
-  Pressable as Pressable6,
-  SafeAreaView,
-  StatusBar,
-  StyleSheet as StyleSheet8,
-  Text as Text8,
-  View as View8
-} from "react-native";
+import React9, { useCallback, useEffect, useMemo as useMemo5, useRef as useRef2, useState as useState7 } from "react";
+import { Pressable as Pressable5, SafeAreaView, StatusBar, StyleSheet as StyleSheet8, Text as Text8, View as View8 } from "react-native";
 
 // app/src/components/UI.js
 import React, { useState } from "react";
@@ -23,6 +16,7 @@ import {
   Text,
   View
 } from "react-native";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 
 // app/src/haptics.js
 import * as Haptics from "expo-haptics";
@@ -48,29 +42,48 @@ var undo = () => fire(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medi
 import { Platform } from "react-native";
 var C = {
   bg: "#0A0B0C",
-  surface: "#121316",
-  surfaceHi: "#191B1F",
-  line: "#232629",
-  lineSoft: "#1A1D20",
-  text: "#ECEDEE",
-  dim: "#9BA1A8",
-  faint: "#61666D",
+  surface: "#141518",
+  surfaceHi: "#1C1E22",
+  line: "#2A2D32",
+  lineSoft: "#1F2226",
+  // Secondary text was too dim to carry the weight it was being given. `dim`
+  // clears 7:1 on the page background and `faint` clears 4.5:1, so a label at
+  // the smallest size in use is still comfortably readable rather than merely
+  // present.
+  text: "#F0F1F2",
+  dim: "#B6BCC4",
+  faint: "#8A9098",
   acid: "#C8FF00",
-  acidDim: "#8FB800",
+  acidDim: "#A6D400",
   acidGlow: "rgba(200,255,0,0.10)",
   up: "#C8FF00",
-  down: "#FF5334",
-  flat: "#9BA1A8"
+  down: "#FF6B4F",
+  flat: "#8A9098"
 };
 var MONO = Platform.select({
   ios: "Menlo",
   android: "monospace",
   default: "monospace"
 });
+var T = {
+  micro: 11,
+  small: 12,
+  body: 13,
+  large: 15,
+  title: 20,
+  display: 34
+};
 var S = {
   gutter: 16,
   radius: 10,
-  hairline: 1
+  hairline: 1,
+  // Apple's minimum comfortable target. Visible pills stay small; the touchable
+  // area around them does not.
+  tap: 44
+};
+var slop = (size) => {
+  const pad = Math.max(0, Math.round((S.tap - size) / 2));
+  return { top: pad, bottom: pad, left: pad, right: pad };
 };
 var tone = (value) => {
   if (value === null || value === void 0 || value === 0) return C.flat;
@@ -92,6 +105,7 @@ var fmtPct = (n, digits = 2) => {
   if (n === null || n === void 0) return "\u2014";
   return `${n >= 0 ? "+" : ""}${n.toFixed(digits)}%`;
 };
+var fmtMagnitude = (n, digits = 1) => n === null || n === void 0 ? "\u2014" : `${n.toFixed(digits)}%`;
 var fmtNum = (n, digits = 2) => n === null || n === void 0 ? "\u2014" : n.toFixed(digits);
 var fmtRank = (n) => n === null || n === void 0 ? "\u2014" : `#${n}`;
 var fmtWhen = (iso) => {
@@ -105,24 +119,77 @@ var fmtWhen = (iso) => {
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 };
+var missingReason = (key) => {
+  switch (key) {
+    case "momentum":
+      return "Needs ~13 months";
+    case "2y":
+      return "Needs 2 years";
+    case "1y":
+    case "riskAdjusted":
+    case "maxDrawdown":
+      return "Needs 1 year";
+    case "9m":
+      return "Needs 9 months";
+    case "6m":
+    case "90d":
+      return "Needs 6 months";
+    case "3m":
+      return "Needs 3 months";
+    case "ytd":
+      return "Listed this year";
+    default:
+      return "Not enough history";
+  }
+};
 
 // app/src/components/UI.js
-function ChipRow({ children }) {
-  return <ScrollView
+function ChipRow({ children, accessibilityLabel }) {
+  const [overflow, setOverflow] = useState(false);
+  const [atEnd, setAtEnd] = useState(false);
+  const [width, setWidth] = useState(0);
+  return <View style={styles.chipRowWrap}>
+      <ScrollView
     horizontal
     showsHorizontalScrollIndicator={false}
     style={styles.chipRow}
     contentContainerStyle={styles.chipRowContent}
+    accessibilityLabel={accessibilityLabel}
+    onLayout={(e) => setWidth(e.nativeEvent.layout.width)}
+    onContentSizeChange={(w) => setOverflow(w > width + 1)}
+    onScroll={(e) => {
+      const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+      setAtEnd(contentOffset.x + layoutMeasurement.width >= contentSize.width - 2);
+    }}
+    scrollEventThrottle={32}
   >
-      {children}
-    </ScrollView>;
+        {children}
+      </ScrollView>
+
+      {overflow && !atEnd && <View pointerEvents="none" style={styles.fade}>
+          <Svg width={36} height="100%">
+            <Defs>
+              <LinearGradient id="chipFade" x1="0" y1="0" x2="1" y2="0">
+                <Stop offset="0" stopColor={C.bg} stopOpacity="0" />
+                <Stop offset="1" stopColor={C.bg} stopOpacity="1" />
+              </LinearGradient>
+            </Defs>
+            <Rect x="0" y="0" width="36" height="100%" fill="url(#chipFade)" />
+          </Svg>
+          <Text style={styles.fadeMark}>›</Text>
+        </View>}
+    </View>;
 }
-function Chip({ label, active, onPress, compact }) {
+function Chip({ label, active, onPress, compact, accessibilityLabel }) {
   return <Pressable
     onPress={() => {
       tick();
       onPress();
     }}
+    hitSlop={slop(compact ? 30 : 34)}
+    accessibilityRole="button"
+    accessibilityState={{ selected: !!active }}
+    accessibilityLabel={accessibilityLabel || label}
     style={({ pressed }) => [
       styles.chip,
       compact && styles.chipCompact,
@@ -133,10 +200,11 @@ function Chip({ label, active, onPress, compact }) {
       <Text style={[styles.chipText, active && styles.chipTextActive]}>{label}</Text>
     </Pressable>;
 }
-function Stat({ label, value, color, width = "33.33%" }) {
+function Stat({ label, value, color, width = "33.33%", reason }) {
+  const blank = value === "\u2014" || value === null || value === void 0;
   return <View style={[styles.stat, { width }]}>
       <Text style={styles.statLabel}>{label}</Text>
-      <Text style={[styles.statValue, color && { color }]}>{value}</Text>
+      {blank && reason ? <Text style={styles.statReason}>{reason}</Text> : <Text style={[styles.statValue, color && { color }]}>{value}</Text>}
     </View>;
 }
 function Disclosure({ label, children }) {
@@ -159,7 +227,7 @@ function Disclosure({ label, children }) {
 }
 function SelectSheet({ title, options, value, visible, onSelect, onClose }) {
   return <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
+      <Pressable style={styles.sheetBackdrop} onPress={onClose} accessibilityLabel="Dismiss">
         {
     /* The inner press is swallowed so tapping the sheet itself does not
        dismiss it; only the backdrop does. */
@@ -177,13 +245,15 @@ function SelectSheet({ title, options, value, visible, onSelect, onClose }) {
         onSelect(option.value);
         onClose();
       }}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
       style={({ pressed }) => [styles.sheetRow, pressed && styles.sheetRowPressed]}
     >
                   <Text style={[styles.sheetLabel, active && styles.sheetLabelActive]}>
                     {option.label}
                   </Text>
                   <Text style={[styles.sheetCount, active && styles.sheetLabelActive]}>
-                    {active ? `${option.count}  \u2713` : option.count}
+                    {option.count === void 0 ? active ? "\u2713" : "" : active ? `${option.count}  \u2713` : option.count}
                   </Text>
                 </Pressable>;
   })}
@@ -192,36 +262,64 @@ function SelectSheet({ title, options, value, visible, onSelect, onClose }) {
       </Pressable>
     </Modal>;
 }
-function SelectButton({ label, active, onPress }) {
+function SelectButton({ label, active, onPress, accessibilityLabel }) {
   return <Pressable
     onPress={() => {
       tick();
       onPress();
     }}
+    accessibilityRole="button"
+    accessibilityLabel={accessibilityLabel || label}
     style={({ pressed }) => [
       styles.select,
       active && styles.selectActive,
       pressed && styles.selectPressed
     ]}
   >
-      <Text
-    numberOfLines={1}
-    style={[styles.selectText, active && styles.selectTextActive]}
-  >
+      <Text numberOfLines={1} style={[styles.selectText, active && styles.selectTextActive]}>
         {label}
       </Text>
       <Text style={[styles.selectMark, active && styles.selectTextActive]}>▾</Text>
     </Pressable>;
 }
+function ActionButton({ label, onPress, busy, tone: kind = "normal" }) {
+  return <Pressable
+    onPress={busy ? void 0 : () => {
+      tick();
+      onPress();
+    }}
+    disabled={busy}
+    accessibilityRole="button"
+    accessibilityState={{ disabled: !!busy, busy: !!busy }}
+    style={({ pressed }) => [
+      styles.action,
+      kind === "danger" && styles.actionDanger,
+      busy && styles.actionBusy,
+      pressed && !busy && styles.actionPressed
+    ]}
+  >
+      <Text style={[styles.actionText, kind === "danger" && styles.actionTextDanger, busy && styles.actionTextBusy]}>
+        {label}
+      </Text>
+    </Pressable>;
+}
 function SectionTitle({ children, right }) {
   return <View style={styles.sectionRow}>
-      <Text style={styles.section}>{children}</Text>
+      <Text style={styles.section} accessibilityRole="header">{children}</Text>
       {right}
     </View>;
 }
 function Banner({ text, tone: kind = "warn" }) {
-  return <View style={[styles.banner, kind === "error" && styles.bannerError]}>
+  return <View style={[styles.banner, kind === "error" && styles.bannerError, kind === "ok" && styles.bannerOk]}>
       <Text style={[styles.bannerText, kind === "error" && styles.bannerTextError]}>{text}</Text>
+    </View>;
+}
+function Snackbar({ text, actionLabel, onAction }) {
+  return <View style={styles.snack} accessibilityLiveRegion="polite">
+      <Text style={styles.snackText} numberOfLines={2}>{text}</Text>
+      {!!actionLabel && <Pressable onPress={onAction} hitSlop={slop(28)} accessibilityRole="button">
+          <Text style={styles.snackAction}>{actionLabel}</Text>
+        </Pressable>}
     </View>;
 }
 function Loading({ label = "LOADING" }) {
@@ -237,53 +335,57 @@ function Empty({ title, hint }) {
     </View>;
 }
 var styles = StyleSheet.create({
-  // 27px of chip (13 line + 12 padding + 2 border) with room to spare.
-  chipRow: { flexGrow: 0, flexShrink: 0, height: 30, marginBottom: 9 },
-  chipRowContent: { paddingHorizontal: S.gutter, alignItems: "center" },
+  chipRowWrap: { position: "relative" },
+  chipRow: { flexGrow: 0, flexShrink: 0, marginBottom: 8 },
+  chipRowContent: { paddingHorizontal: S.gutter, alignItems: "center", paddingVertical: 4 },
+  fade: { position: "absolute", right: 0, top: 0, bottom: 8, width: 36, justifyContent: "center", alignItems: "flex-end" },
+  fadeMark: { position: "absolute", right: 3, color: C.dim, fontFamily: MONO, fontSize: T.body },
   chip: {
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 7,
     borderWidth: S.hairline,
     borderColor: C.line,
     backgroundColor: C.surface,
-    marginRight: 6
+    marginRight: 7
   },
-  chipCompact: { paddingHorizontal: 9, paddingVertical: 5 },
+  chipCompact: { paddingHorizontal: 10, paddingVertical: 7 },
   chipPressed: { borderColor: C.faint },
   chipActive: { backgroundColor: C.acid, borderColor: C.acid },
-  // An explicit lineHeight keeps Menlo's ascenders from being clipped by the
-  // pill once letterSpacing is applied.
-  chipText: { color: C.dim, fontFamily: MONO, fontSize: 10, lineHeight: 13, letterSpacing: 0.8 },
+  chipText: { color: C.dim, fontFamily: MONO, fontSize: T.micro, lineHeight: T.micro + 3, letterSpacing: 0.8 },
   chipTextActive: { color: C.bg },
   select: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 11,
-    paddingVertical: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     borderRadius: S.radius,
     borderWidth: S.hairline,
     borderColor: C.line,
     backgroundColor: C.surface,
-    maxWidth: 150
+    maxWidth: 158
   },
   selectActive: { borderColor: C.acid },
   selectPressed: { borderColor: C.faint },
-  selectText: {
-    color: C.dim,
-    fontFamily: MONO,
-    fontSize: 10,
-    lineHeight: 13,
-    letterSpacing: 0.8,
-    flexShrink: 1
-  },
+  selectText: { color: C.dim, fontFamily: MONO, fontSize: T.micro, lineHeight: T.micro + 3, letterSpacing: 0.6, flexShrink: 1 },
   selectTextActive: { color: C.acid },
-  selectMark: { color: C.faint, fontFamily: MONO, fontSize: 10, marginLeft: 6 },
-  sheetBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.72)",
-    justifyContent: "flex-end"
+  selectMark: { color: C.faint, fontFamily: MONO, fontSize: T.micro, marginLeft: 6 },
+  action: {
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    borderRadius: 7,
+    borderWidth: S.hairline,
+    borderColor: C.acid,
+    marginRight: 8,
+    marginTop: 8
   },
+  actionDanger: { borderColor: C.down },
+  actionPressed: { backgroundColor: C.acidGlow },
+  actionBusy: { borderColor: C.line },
+  actionText: { color: C.acid, fontFamily: MONO, fontSize: T.micro, letterSpacing: 1 },
+  actionTextDanger: { color: C.down },
+  actionTextBusy: { color: C.faint },
+  sheetBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.72)", justifyContent: "flex-end" },
   sheet: {
     backgroundColor: C.surface,
     borderTopWidth: S.hairline,
@@ -295,10 +397,10 @@ var styles = StyleSheet.create({
     maxHeight: "72%"
   },
   sheetTitle: {
-    color: C.faint,
+    color: C.dim,
     fontFamily: MONO,
-    fontSize: 10,
-    letterSpacing: 1.6,
+    fontSize: T.micro,
+    letterSpacing: 1.4,
     paddingHorizontal: S.gutter,
     paddingBottom: 10
   },
@@ -307,58 +409,73 @@ var styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: S.gutter,
-    paddingVertical: 13,
+    minHeight: S.tap,
+    paddingVertical: 12,
     borderTopWidth: S.hairline,
     borderTopColor: C.lineSoft
   },
   sheetRowPressed: { backgroundColor: C.surfaceHi },
-  sheetLabel: { color: C.text, fontFamily: MONO, fontSize: 12, letterSpacing: 0.5 },
+  sheetLabel: { color: C.text, fontFamily: MONO, fontSize: T.body, letterSpacing: 0.4, flexShrink: 1 },
   sheetLabelActive: { color: C.acid },
-  sheetCount: { color: C.faint, fontFamily: MONO, fontSize: 11 },
-  disclosure: {
-    marginTop: 18,
-    borderTopWidth: S.hairline,
-    borderTopColor: C.line
-  },
+  sheetCount: { color: C.dim, fontFamily: MONO, fontSize: T.small, marginLeft: 12 },
+  disclosure: { marginTop: 18, borderTopWidth: S.hairline, borderTopColor: C.line },
   disclosureRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: 14
+    minHeight: S.tap,
+    paddingVertical: 12
   },
   disclosurePressed: { opacity: 0.6 },
-  disclosureLabel: { color: C.dim, fontFamily: MONO, fontSize: 10, letterSpacing: 1.4 },
-  disclosureMark: { color: C.acid, fontFamily: MONO, fontSize: 14 },
+  disclosureLabel: { color: C.dim, fontFamily: MONO, fontSize: T.micro, letterSpacing: 1.3 },
+  disclosureMark: { color: C.acid, fontFamily: MONO, fontSize: T.large },
   disclosureBody: { paddingBottom: 14 },
-  stat: { paddingVertical: 9, paddingRight: 10 },
-  statLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 0.8 },
-  statValue: { color: C.text, fontFamily: MONO, fontSize: 14, marginTop: 3 },
+  stat: { paddingVertical: 10, paddingRight: 10 },
+  statLabel: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.6 },
+  statValue: { color: C.text, fontFamily: MONO, fontSize: T.large, marginTop: 4 },
+  statReason: { color: C.faint, fontSize: T.micro, marginTop: 5, fontStyle: "italic" },
   sectionRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 22,
+    marginTop: 24,
     marginBottom: 2
   },
-  section: { color: C.faint, fontFamily: MONO, fontSize: 10, letterSpacing: 1.6 },
+  section: { color: C.dim, fontFamily: MONO, fontSize: T.micro, letterSpacing: 1.5 },
   banner: {
     backgroundColor: C.acidGlow,
     borderLeftWidth: 2,
     borderLeftColor: C.acid,
-    paddingVertical: 7,
-    paddingHorizontal: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 11,
     marginHorizontal: S.gutter,
     marginBottom: 8,
     borderRadius: 4
   },
-  bannerError: { backgroundColor: "rgba(255,83,52,0.10)", borderLeftColor: C.down },
-  bannerText: { color: C.acidDim, fontFamily: MONO, fontSize: 10 },
+  bannerError: { backgroundColor: "rgba(255,107,79,0.12)", borderLeftColor: C.down },
+  bannerOk: { backgroundColor: "rgba(200,255,0,0.08)" },
+  bannerText: { color: C.dim, fontFamily: MONO, fontSize: T.micro, lineHeight: T.micro + 5 },
   bannerTextError: { color: C.down },
-  loading: { flex: 1, alignItems: "center", justifyContent: "center", gap: 10 },
-  loadingText: { color: C.faint, fontFamily: MONO, fontSize: 10, letterSpacing: 2, marginTop: 10 },
+  snack: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: C.surfaceHi,
+    borderWidth: S.hairline,
+    borderColor: C.line,
+    borderRadius: S.radius,
+    marginHorizontal: S.gutter,
+    marginBottom: 8,
+    paddingHorizontal: 14,
+    minHeight: S.tap
+  },
+  snackText: { color: C.text, fontSize: T.small, flexShrink: 1, paddingVertical: 10 },
+  snackAction: { color: C.acid, fontFamily: MONO, fontSize: T.micro, letterSpacing: 1, paddingLeft: 14 },
+  loading: { flex: 1, alignItems: "center", justifyContent: "center" },
+  loadingText: { color: C.dim, fontFamily: MONO, fontSize: T.micro, letterSpacing: 2, marginTop: 12 },
   empty: { alignItems: "center", justifyContent: "center", paddingTop: 70, paddingHorizontal: 30 },
-  emptyTitle: { color: C.dim, fontFamily: MONO, fontSize: 12, letterSpacing: 1 },
-  emptyHint: { color: C.faint, fontSize: 11, marginTop: 8, textAlign: "center", lineHeight: 17 }
+  emptyTitle: { color: C.dim, fontFamily: MONO, fontSize: T.body, letterSpacing: 1 },
+  emptyHint: { color: C.faint, fontSize: T.small, marginTop: 10, textAlign: "center", lineHeight: 19 }
 });
 
 // app/src/storage.js
@@ -379,7 +496,9 @@ var DEFAULT_SETTINGS = {
   showLogos: true,
   showSparklines: true,
   refreshOnOpen: true,
-  haptics: true
+  haptics: true,
+  // Flipped the first time a chart is scrubbed, so the hint appears once.
+  hasScrubbed: false
 };
 var read = async (key, fallback) => {
   try {
@@ -418,7 +537,7 @@ var clearAll = async () => {
 // app/src/data.js
 var SORTS = [
   { key: "marketCap", label: "MKT CAP", short: "CAP", rank: "marketCap", better: "high", value: (t) => t.marketCap, format: "cap" },
-  { key: "change", label: "1 DAY", short: "1D", rank: null, better: "high", value: (t) => t.changePct, format: "pct" },
+  { key: "change", label: "1 DAY", short: "1D", rank: "change", better: "high", value: (t) => t.changePct, format: "pct" },
   { key: "r1w", label: "1 WEEK", short: "1W", rank: "return_1w", better: "high", value: (t) => t.returns["1w"], format: "pct" },
   { key: "r1m", label: "1 MONTH", short: "1M", rank: "return_1m", better: "high", value: (t) => t.returns["1m"], format: "pct" },
   { key: "r3m", label: "3 MONTH", short: "3M", rank: "return_3m", better: "high", value: (t) => t.returns["3m"], format: "pct" },
@@ -482,6 +601,9 @@ function arrange(tickers, { sortKey, query, sector, direction = "desc" }) {
     return descending ? bv - av : av - bv;
   });
 }
+function sortOptions() {
+  return SORTS.map((s) => ({ value: s.key, label: s.label }));
+}
 function sectorOptions(tickers) {
   const counts = /* @__PURE__ */ new Map();
   for (const ticker of tickers) {
@@ -538,10 +660,10 @@ import { Image, Pressable as Pressable2, StyleSheet as StyleSheet2, Text as Text
 
 // app/src/components/Sparkline.js
 import React2 from "react";
-import Svg, { Polyline } from "react-native-svg";
+import Svg2, { Polyline } from "react-native-svg";
 function Sparkline({ points, width = 56, height = 22, color = C.acid }) {
   if (!points || points.length < 2) {
-    return <Svg width={width} height={height} />;
+    return <Svg2 width={width} height={height} />;
   }
   let min = Infinity;
   let max = -Infinity;
@@ -558,7 +680,7 @@ function Sparkline({ points, width = 56, height = 22, color = C.acid }) {
     const y = pad + usable - (p.close - min) / span * usable;
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(" ");
-  return <Svg width={width} height={height}>
+  return <Svg2 width={width} height={height}>
       <Polyline
     points={coords}
     fill="none"
@@ -567,7 +689,7 @@ function Sparkline({ points, width = 56, height = 22, color = C.acid }) {
     strokeLinejoin="round"
     strokeLinecap="round"
   />
-    </Svg>;
+    </Svg2>;
 }
 var Sparkline_default = React2.memo(Sparkline);
 
@@ -590,34 +712,36 @@ var formatMetric = (format, value) => {
 };
 function Logo({ uri, symbol, enabled: enabled2 }) {
   const [failed, setFailed] = useState2(false);
-  if (!enabled2 || !uri || failed) {
-    return <View2 style={[styles2.logo, styles2.logoFallback]}>
-        <Text2 style={styles2.logoLetter}>{symbol.slice(0, 1)}</Text2>
-      </View2>;
-  }
-  return <Image
+  return <View2 style={styles2.logoBox}>
+      {!enabled2 || !uri || failed ? <Text2 style={styles2.logoLetter}>{symbol.slice(0, 1)}</Text2> : <Image
     source={{ uri }}
     style={styles2.logo}
     resizeMode="contain"
     onError={() => setFailed(true)}
-  />;
+  />}
+    </View2>;
 }
 function TickerRow({ ticker, position, sort, settings, starred, onPress, onToggleStar }) {
   const metricIsCap = sort.format === "cap";
   const metricValue = metricIsCap ? ticker.changePct : sort.value(ticker);
   const metricColour = metricIsCap || sort.format === "pct" ? tone(metricValue) : C.text;
+  const shown = formatMetric(metricIsCap ? "pct" : sort.format, metricValue);
   return <Pressable2
     onPress={() => {
       tap();
       onPress(ticker);
     }}
+    accessibilityRole="button"
+    accessibilityLabel={`${ticker.symbol}, ${ticker.name}. ${fmtPrice(ticker.price)}, ${fmtPct(ticker.changePct)} today. ${sort.label} ${shown}.` + (position ? ` Rank ${position}.` : "") + (starred ? " On watchlist." : "")}
     style={({ pressed }) => [
       styles2.row,
       starred && styles2.rowStarred,
       pressed && styles2.rowPressed
     ]}
   >
-      <Text2 style={styles2.position}>{position}</Text2>
+      <Text2 style={styles2.position}>
+        {position === null || position === void 0 ? "\u2014" : position}
+      </Text2>
 
       <Logo uri={ticker.logo} symbol={ticker.symbol} enabled={settings.showLogos} />
 
@@ -635,31 +759,28 @@ function TickerRow({ ticker, position, sort, settings, starred, onPress, onToggl
 
       <View2 style={styles2.numbers}>
         <Text2 style={styles2.price}>{fmtPrice(ticker.price)}</Text2>
-        <Text2 style={[styles2.metric, { color: metricColour }]}>
-          {formatMetric(metricIsCap ? "pct" : sort.format, metricValue)}
-        </Text2>
+        <Text2 style={[styles2.metric, { color: metricColour }]}>{shown}</Text2>
       </View2>
 
       {
-    /* Nested inside the row's Pressable, but it claims its own touches, so
-       tapping the button never opens the ticker. */
+    /* Nested inside the row's Pressable but claiming its own touches, so the
+       star never opens the ticker and the row never toggles the watchlist.
+       A bare glyph rather than a boxed control: repeated down a hundred rows
+       a box is a lot of furniture for a binary. */
   }
       <Pressable2
     onPress={() => {
       (starred ? undo : confirm)();
       onToggleStar(ticker.symbol);
     }}
-    hitSlop={10}
+    hitSlop={slop(24)}
     accessibilityRole="button"
+    accessibilityState={{ selected: starred }}
     accessibilityLabel={starred ? `Remove ${ticker.symbol} from watchlist` : `Add ${ticker.symbol} to watchlist`}
-    style={({ pressed }) => [
-      styles2.watch,
-      starred && styles2.watchOn,
-      pressed && styles2.watchPressed
-    ]}
+    style={({ pressed }) => [styles2.watch, pressed && styles2.watchPressed]}
   >
         <Text2 style={[styles2.watchGlyph, starred && styles2.watchGlyphOn]}>
-          {starred ? "\u2713" : "+"}
+          {starred ? "\u2605" : "\u2606"}
         </Text2>
       </Pressable2>
     </Pressable2>;
@@ -668,63 +789,56 @@ var styles2 = StyleSheet2.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingVertical: 10,
-    paddingRight: S.gutter,
+    // Looser than it was: with the type a size larger, packing the maximum
+    // number of rows onto the screen costs more in scanability than it buys.
+    paddingVertical: 13,
+    paddingRight: S.gutter - 2,
     paddingLeft: S.gutter - 2,
     borderBottomWidth: S.hairline,
     borderBottomColor: C.lineSoft,
-    // The edge is always present and usually invisible, so marking a row
-    // tints it rather than nudging every column two pixels sideways.
+    // The edge is always present and usually invisible, so marking a row tints
+    // it rather than nudging every column two pixels sideways.
     borderLeftWidth: 2,
     borderLeftColor: "transparent"
   },
-  rowStarred: {
-    borderLeftColor: C.acid,
-    backgroundColor: "rgba(200,255,0,0.05)"
-  },
+  rowStarred: { borderLeftColor: C.acid, backgroundColor: "rgba(200,255,0,0.05)" },
   rowPressed: { backgroundColor: C.surface },
-  position: {
-    width: 24,
-    color: C.faint,
-    fontFamily: MONO,
-    fontSize: 11
-  },
-  logo: {
-    width: 26,
-    height: 26,
-    borderRadius: 5,
+  position: { width: 30, color: C.faint, fontFamily: MONO, fontSize: T.micro },
+  logoBox: {
+    width: 30,
+    height: 30,
+    borderRadius: 7,
     backgroundColor: C.surfaceHi,
-    marginRight: 10
-  },
-  logoFallback: { alignItems: "center", justifyContent: "center" },
-  logoLetter: { color: C.dim, fontFamily: MONO, fontSize: 12 },
-  identity: { flex: 1, paddingRight: 8 },
-  symbol: { color: C.text, fontFamily: MONO, fontSize: 13, letterSpacing: 0.5 },
-  name: { color: C.faint, fontSize: 10, marginTop: 2 },
-  spark: { width: 56, marginRight: 10 },
-  numbers: { alignItems: "flex-end", minWidth: 74 },
-  price: { color: C.text, fontFamily: MONO, fontSize: 13 },
-  metric: { fontFamily: MONO, fontSize: 11, marginTop: 2 },
-  watch: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
-    marginLeft: 10,
-    alignItems: "center",
-    justifyContent: "center",
     borderWidth: S.hairline,
     borderColor: C.line,
-    backgroundColor: C.surface
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 11,
+    overflow: "hidden"
   },
-  watchOn: { borderColor: C.acid, backgroundColor: "transparent" },
-  watchPressed: { borderColor: C.faint },
-  watchGlyph: { color: C.dim, fontSize: 15, lineHeight: 18, marginTop: -1 },
-  watchGlyphOn: { color: C.acid, fontSize: 13 }
+  logo: { width: 22, height: 22 },
+  logoLetter: { color: C.dim, fontFamily: MONO, fontSize: T.small },
+  identity: { flex: 1, paddingRight: 8 },
+  symbol: { color: C.text, fontFamily: MONO, fontSize: T.body, letterSpacing: 0.5 },
+  name: { color: C.faint, fontSize: T.micro, marginTop: 3 },
+  spark: { width: 54, marginRight: 10 },
+  numbers: { alignItems: "flex-end", minWidth: 78 },
+  price: { color: C.text, fontFamily: MONO, fontSize: T.body },
+  metric: { fontFamily: MONO, fontSize: T.small, marginTop: 3 },
+  watch: { paddingLeft: 12, alignItems: "center", justifyContent: "center" },
+  watchPressed: { opacity: 0.5 },
+  watchGlyph: { color: C.faint, fontSize: 19, lineHeight: 23 },
+  watchGlyphOn: { color: C.acid }
 });
 var TickerRow_default = React3.memo(TickerRow);
 
 // app/src/screens/RanksScreen.js
-var ROW_HEIGHT = 57;
+function describeUniverse(snapshot) {
+  const size = snapshot.universeSize;
+  const sel = snapshot.selection;
+  if (!sel || !sel.balanced) return `${size} LARGE-CAP STOCKS BY MARKET CAP`;
+  return `${size} LARGE-CAP STOCKS \xB7 ${sel.core} CORE + ${sel.balanced} SECTOR-BALANCED`;
+}
 function RanksScreen({
   snapshot,
   tickers,
@@ -734,166 +848,209 @@ function RanksScreen({
   onOpen,
   onToggleStar,
   onRefresh,
-  refreshing
+  refreshing,
+  // Held by App rather than here, so opening a ticker or switching tabs does
+  // not quietly reset the view the reader set up.
+  listState,
+  onListState,
+  listRef
 }) {
-  const [sortKey, setSortKey] = useState3(settings.defaultSort);
-  const [direction, setDirection] = useState3("desc");
-  const [query, setQuery] = useState3("");
-  const [sector, setSector] = useState3("All");
+  const { sortKey, direction, query, sector } = listState;
   const [sectorOpen, setSectorOpen] = useState3(false);
   const sort = sortByKey(sortKey);
   const sectors = useMemo(() => sectorOptions(tickers), [tickers]);
-  const sectorLabel = sector === "All" ? "ALL SECTORS" : sector.toUpperCase();
   const rows = useMemo(
     () => arrange(tickers, { sortKey, query, sector, direction }),
     [tickers, sortKey, query, sector, direction]
   );
+  const bestFirst = direction === "desc";
+  const filtered = sector !== "All" || !!query.trim();
   const pickSort = (key) => {
-    if (key === sortKey) {
-      setDirection((d) => d === "desc" ? "asc" : "desc");
-    } else {
-      setSortKey(key);
-      setDirection("desc");
-    }
+    if (key === sortKey) onListState({ direction: bestFirst ? "asc" : "desc" });
+    else onListState({ sortKey: key, direction: "desc" });
   };
   return <View3 style={styles3.wrap}>
       <View3 style={styles3.header}>
-        <View3>
-          <Text3 style={styles3.title}>RANKS</Text3>
-          <Text3 style={styles3.subtitle}>
-            TOP {snapshot.universeSize} BY MARKET CAP · {snapshot.dataDate}
-          </Text3>
-        </View3>
-        <Pressable3 onPress={() => setDirection((d) => d === "desc" ? "asc" : "desc")}>
-          <Text3 style={styles3.direction}>{direction === "desc" ? "BEST \u25BC" : "WORST \u25B2"}</Text3>
-        </Pressable3>
+        <Text3 style={styles3.title} accessibilityRole="header">RANKS</Text3>
+        <Text3 style={styles3.subtitle}>
+          {describeUniverse(snapshot)} · {snapshot.dataDate}
+        </Text3>
       </View3>
 
       {!!staleMessage && <Banner text={staleMessage} />}
 
       <View3 style={styles3.filterRow}>
-        <TextInput
+        <View3 style={styles3.searchWrap}>
+          <TextInput
     value={query}
-    onChangeText={setQuery}
+    onChangeText={(v) => onListState({ query: v })}
     placeholder="SEARCH SYMBOL OR NAME"
     placeholderTextColor={C.faint}
     autoCapitalize="characters"
     autoCorrect={false}
+    accessibilityLabel="Search by symbol or company name"
     style={styles3.search}
   />
+          {!!query && <Pressable3
+    onPress={() => {
+      tick();
+      onListState({ query: "" });
+    }}
+    hitSlop={slop(26)}
+    accessibilityRole="button"
+    accessibilityLabel="Clear search"
+    style={styles3.clear}
+  >
+              <Text3 style={styles3.clearMark}>×</Text3>
+            </Pressable3>}
+        </View3>
         <SelectButton
-    label={sectorLabel}
+    label={sector === "All" ? "ALL SECTORS" : sector.toUpperCase()}
     active={sector !== "All"}
     onPress={() => setSectorOpen(true)}
+    accessibilityLabel={`Sector filter, ${sector === "All" ? "all sectors" : sector}`}
   />
       </View3>
 
-      <ChipRow>
+      <ChipRow accessibilityLabel="Sort by metric">
         {SORTS.map((s) => <Chip
     key={s.key}
     label={s.short}
     active={s.key === sortKey}
     onPress={() => pickSort(s.key)}
+    accessibilityLabel={s.key === sortKey ? `${s.label}, sorted ${bestFirst ? "best first" : "worst first"}. Tap to reverse.` : `Sort by ${s.label}`}
   />)}
       </ChipRow>
 
-      <View3 style={styles3.columns}>
+      {
+    /* The active metric spelled out, with its direction attached rather than
+       floating in the header where it read as unrelated. */
+  }
+      <Pressable3
+    onPress={() => {
+      tick();
+      onListState({ direction: bestFirst ? "asc" : "desc" });
+    }}
+    accessibilityRole="button"
+    accessibilityLabel={`Sorted by ${sort.label}, ${bestFirst ? "best first" : "worst first"}. Tap to reverse.`}
+    style={styles3.columns}
+  >
         <Text3 style={styles3.colLeft}>#  TICKER</Text3>
-        <Text3 style={styles3.colRight}>PRICE / {sort.short === "CAP" ? "1D" : sort.short}</Text3>
-      </View3>
+        <Text3 style={styles3.colRight}>
+          PRICE / <Text3 style={styles3.colMetric}>{sort.label}</Text3>
+          <Text3 style={styles3.colDir}>{bestFirst ? "  \xB7 BEST FIRST \u25BC" : "  \xB7 WORST FIRST \u25B2"}</Text3>
+        </Text3>
+      </Pressable3>
+
+      {filtered && <View3 style={styles3.summary}>
+          <Text3 style={styles3.summaryText} numberOfLines={1}>
+            {sector !== "All" ? sector : "All sectors"}
+            {query.trim() ? ` \xB7 \u201C${query.trim()}\u201D` : ""} · {rows.length}{" "}
+            {rows.length === 1 ? "result" : "results"}
+          </Text3>
+          <Pressable3
+    onPress={() => {
+      tick();
+      onListState({ query: "", sector: "All" });
+    }}
+    hitSlop={slop(30)}
+    accessibilityRole="button"
+    accessibilityLabel="Clear filters"
+  >
+            <Text3 style={styles3.summaryClear}>CLEAR</Text3>
+          </Pressable3>
+        </View3>}
 
       <FlatList
+    ref={listRef}
     data={rows}
     keyExtractor={(t) => t.symbol}
     renderItem={({ item, index }) => <TickerRow_default
       ticker={item}
-      position={sort.rank === "marketCap" ? item.ranks.marketCap : index + 1}
+      position={item.ranks[sort.rank] ?? index + 1}
       sort={sort}
       settings={settings}
       starred={watchlist.includes(item.symbol)}
       onPress={onOpen}
       onToggleStar={onToggleStar}
     />}
-    getItemLayout={(_, index) => ({
-      length: ROW_HEIGHT,
-      offset: ROW_HEIGHT * index,
-      index
-    })}
-    initialNumToRender={14}
+    initialNumToRender={12}
     windowSize={9}
     removeClippedSubviews
     keyboardShouldPersistTaps="handled"
+    keyboardDismissMode="on-drag"
     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={C.acid} />}
     ListEmptyComponent={<Empty title="NO MATCHES" hint="Nothing in the universe matches that filter." />}
     contentContainerStyle={rows.length ? null : { flexGrow: 1 }}
   />
+
       <SelectSheet
     title="FILTER BY SECTOR"
     options={sectors}
     value={sector}
     visible={sectorOpen}
-    onSelect={setSector}
+    onSelect={(v) => onListState({ sector: v })}
     onClose={() => setSectorOpen(false)}
   />
     </View3>;
 }
 var styles3 = StyleSheet3.create({
   wrap: { flex: 1 },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    paddingHorizontal: S.gutter,
-    paddingTop: 6,
-    paddingBottom: 12
-  },
-  title: { color: C.text, fontFamily: MONO, fontSize: 19, letterSpacing: 3 },
-  subtitle: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1, marginTop: 4 },
-  direction: { color: C.acid, fontFamily: MONO, fontSize: 10, letterSpacing: 1, paddingTop: 6 },
+  header: { paddingHorizontal: S.gutter, paddingTop: 6, paddingBottom: 12 },
+  title: { color: C.text, fontFamily: MONO, fontSize: T.title, letterSpacing: 3 },
+  subtitle: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.6, marginTop: 6 },
   filterRow: {
     flexDirection: "row",
     alignItems: "stretch",
     marginHorizontal: S.gutter,
     marginBottom: 10
   },
+  searchWrap: { flex: 1, marginRight: 8, justifyContent: "center" },
   search: {
-    flex: 1,
-    marginRight: 8,
-    paddingHorizontal: 11,
-    paddingVertical: 9,
+    paddingHorizontal: 12,
+    paddingRight: 34,
+    paddingVertical: 11,
     backgroundColor: C.surface,
     borderWidth: S.hairline,
     borderColor: C.line,
     borderRadius: S.radius,
     color: C.text,
     fontFamily: MONO,
-    fontSize: 12
+    fontSize: T.small
   },
+  clear: { position: "absolute", right: 10, height: 24, width: 24, alignItems: "center", justifyContent: "center" },
+  clearMark: { color: C.dim, fontSize: 19, lineHeight: 22 },
   columns: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "center",
     paddingHorizontal: S.gutter,
-    paddingBottom: 7,
-    paddingTop: 3,
+    paddingBottom: 8,
+    paddingTop: 4,
     borderBottomWidth: S.hairline,
     borderBottomColor: C.line
   },
-  colLeft: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1 },
-  colRight: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1 }
+  colLeft: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8 },
+  colRight: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8 },
+  colMetric: { color: C.text },
+  colDir: { color: C.acid },
+  summary: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: S.gutter,
+    paddingVertical: 9,
+    backgroundColor: C.surface,
+    borderBottomWidth: S.hairline,
+    borderBottomColor: C.line
+  },
+  summaryText: { color: C.dim, fontSize: T.micro, flexShrink: 1 },
+  summaryClear: { color: C.acid, fontFamily: MONO, fontSize: T.micro, letterSpacing: 1, paddingLeft: 12 }
 });
 
 // app/src/screens/SettingsScreen.js
 import React5, { useState as useState4 } from "react";
-import {
-  Alert,
-  Pressable as Pressable4,
-  ScrollView as ScrollView2,
-  StyleSheet as StyleSheet4,
-  Switch,
-  Text as Text4,
-  TextInput as TextInput2,
-  View as View4
-} from "react-native";
+import { Alert, ScrollView as ScrollView2, StyleSheet as StyleSheet4, Switch, Text as Text4, TextInput as TextInput2, View as View4 } from "react-native";
 function Toggle({ label, hint, value, onChange }) {
   return <View4 style={styles4.toggleRow}>
       <View4 style={styles4.toggleText}>
@@ -903,10 +1060,17 @@ function Toggle({ label, hint, value, onChange }) {
       <Switch
     value={value}
     onValueChange={onChange}
+    accessibilityLabel={label}
     trackColor={{ false: C.line, true: C.acidDim }}
     thumbColor={value ? C.acid : C.faint}
     ios_backgroundColor={C.line}
   />
+    </View4>;
+}
+function Fact({ label, value }) {
+  return <View4 style={styles4.factRow}>
+      <Text4 style={styles4.factKey}>{label}</Text4>
+      <Text4 style={styles4.factValue}>{value}</Text4>
     </View4>;
 }
 function SettingsScreen({
@@ -917,72 +1081,37 @@ function SettingsScreen({
   watchlistCount,
   onClearWatchlist,
   onResetAll,
-  onRefresh
+  onRefresh,
+  refreshing,
+  refreshResult
 }) {
   const [draftUrl, setDraftUrl] = useState4(settings.sourceUrl);
-  const commitUrl = () => {
+  const [sortOpen, setSortOpen] = useState4(false);
+  const dirty = draftUrl.trim() !== settings.sourceUrl;
+  const applyUrl = () => {
     const url = draftUrl.trim();
-    if (!url) {
-      setDraftUrl(settings.sourceUrl);
-      return;
-    }
     if (!/^https?:\/\//i.test(url)) {
       Alert.alert("Invalid URL", "The snapshot URL must start with http:// or https://");
-      setDraftUrl(settings.sourceUrl);
       return;
     }
-    if (url !== settings.sourceUrl) {
-      onChange({ sourceUrl: url });
-      onRefresh();
-    }
+    onChange({ sourceUrl: url });
+    onRefresh(url);
   };
   const confirm2 = (title, message, action) => Alert.alert(title, message, [
     { text: "Cancel", style: "cancel" },
     { text: "Confirm", style: "destructive", onPress: action }
   ]);
-  return <ScrollView2 style={styles4.wrap} contentContainerStyle={styles4.content}>
-      <Text4 style={styles4.title}>SETTINGS</Text4>
-
-      <SectionTitle>DATA SOURCE</SectionTitle>
-      <TextInput2
-    value={draftUrl}
-    onChangeText={setDraftUrl}
-    onBlur={commitUrl}
-    onSubmitEditing={commitUrl}
-    autoCapitalize="none"
-    autoCorrect={false}
-    multiline
-    placeholder={DEFAULT_SOURCE}
-    placeholderTextColor={C.faint}
-    style={styles4.input}
-  />
-      <View4 style={styles4.inlineActions}>
-        <Chip
-    compact
-    label="RESET URL"
-    onPress={() => {
-      setDraftUrl(DEFAULT_SOURCE);
-      onChange({ sourceUrl: DEFAULT_SOURCE });
-      onRefresh();
-    }}
-  />
-        <Chip compact label="REFRESH NOW" onPress={onRefresh} />
-      </View4>
-      <Text4 style={styles4.hint}>
-        Point this at any raw snapshot.json — a fork, a branch, or a local server while you are
-        testing the pipeline.
-      </Text4>
+  return <ScrollView2 style={styles4.wrap} contentContainerStyle={styles4.content} keyboardShouldPersistTaps="handled">
+      <Text4 style={styles4.title} accessibilityRole="header">SETTINGS</Text4>
 
       <SectionTitle>DISPLAY</SectionTitle>
-      <Text4 style={styles4.fieldLabel}>DEFAULT SORT ON OPEN</Text4>
-      <View4 style={styles4.chipWrap}>
-        {SORTS.map((s) => <Chip
-    key={s.key}
-    compact
-    label={s.short}
-    active={settings.defaultSort === s.key}
-    onPress={() => onChange({ defaultSort: s.key })}
-  />)}
+      <View4 style={styles4.selectRow}>
+        <Text4 style={styles4.fieldLabel}>DEFAULT SORT ON OPEN</Text4>
+        <SelectButton
+    label={sortByKey(settings.defaultSort).label}
+    onPress={() => setSortOpen(true)}
+    accessibilityLabel={`Default sort, ${sortByKey(settings.defaultSort).label}`}
+  />
       </View4>
 
       <Toggle
@@ -1011,62 +1140,105 @@ function SettingsScreen({
   />
 
       <SectionTitle>SNAPSHOT</SectionTitle>
-      <View4 style={styles4.factRow}><Text4 style={styles4.factKey}>DATA DATE</Text4><Text4 style={styles4.factValue}>{snapshot?.dataDate || "\u2014"}</Text4></View4>
-      <View4 style={styles4.factRow}><Text4 style={styles4.factKey}>BUILT</Text4><Text4 style={styles4.factValue}>{snapshot?.generatedAt?.replace("T", " ").replace("+00:00", " UTC") || "\u2014"}</Text4></View4>
-      <View4 style={styles4.factRow}><Text4 style={styles4.factKey}>UNIVERSE</Text4><Text4 style={styles4.factValue}>{snapshot?.universeSize ?? "\u2014"} tickers</Text4></View4>
-      <View4 style={styles4.factRow}><Text4 style={styles4.factKey}>SESSIONS</Text4><Text4 style={styles4.factValue}>{snapshot?.sessions ?? "\u2014"}</Text4></View4>
-      <View4 style={styles4.factRow}><Text4 style={styles4.factKey}>FETCHED</Text4><Text4 style={styles4.factValue}>{fmtWhen(lastFetched)}</Text4></View4>
-      <View4 style={styles4.factRow}><Text4 style={styles4.factKey}>SOURCE</Text4><Text4 style={styles4.factValue}>{snapshot?.source || "\u2014"}</Text4></View4>
+      <Fact label="DATA DATE" value={snapshot?.dataDate || "\u2014"} />
+      <Fact
+    label="BUILT"
+    value={snapshot?.generatedAt?.replace("T", " ").replace("+00:00", " UTC") || "\u2014"}
+  />
+      <Fact label="UNIVERSE" value={`${snapshot?.universeSize ?? "\u2014"} tickers`} />
+      <Fact label="SESSIONS" value={snapshot?.sessions ?? "\u2014"} />
+      <Fact label="FETCHED" value={fmtWhen(lastFetched)} />
+
+      <View4 style={styles4.actions}>
+        <ActionButton
+    label={refreshing ? "REFRESHING\u2026" : "REFRESH NOW"}
+    busy={refreshing}
+    onPress={() => onRefresh()}
+  />
+      </View4>
+      {!!refreshResult && <View4 style={styles4.feedback}>
+          <Banner text={refreshResult.message} tone={refreshResult.ok ? "ok" : "error"} />
+        </View4>}
 
       <SectionTitle>STORAGE</SectionTitle>
       <Text4 style={styles4.hint}>
         The watchlist, these settings and the last snapshot live on this phone only. There is no
         account and no server holding any of it.
       </Text4>
-      <View4 style={styles4.inlineActions}>
-        <Pressable4
-    style={styles4.danger}
+      <View4 style={styles4.actions}>
+        <ActionButton
+    label={`CLEAR WATCHLIST (${watchlistCount})`}
+    tone="danger"
     onPress={() => confirm2("Clear watchlist", `Remove all ${watchlistCount} tracked tickers?`, onClearWatchlist)}
-  >
-          <Text4 style={styles4.dangerText}>CLEAR WATCHLIST ({watchlistCount})</Text4>
-        </Pressable4>
-      </View4>
-      <View4 style={styles4.inlineActions}>
-        <Pressable4
-    style={styles4.danger}
+  />
+        <ActionButton
+    label="RESET ALL DATA"
+    tone="danger"
     onPress={() => confirm2("Reset everything", "Clear the watchlist, settings and cached snapshot?", onResetAll)}
-  >
-          <Text4 style={styles4.dangerText}>RESET ALL DATA</Text4>
-        </Pressable4>
+  />
       </View4>
+
+      {
+    /* A raw GitHub URL is indispensable while working on the pipeline and
+       irrelevant every other day, so it folds away rather than heading the
+       screen. */
+  }
+      <Disclosure label="ADVANCED ›">
+        <Text4 style={styles4.fieldLabel}>SNAPSHOT URL</Text4>
+        <TextInput2
+    value={draftUrl}
+    onChangeText={setDraftUrl}
+    autoCapitalize="none"
+    autoCorrect={false}
+    multiline
+    placeholder={DEFAULT_SOURCE}
+    placeholderTextColor={C.faint}
+    accessibilityLabel="Snapshot URL"
+    style={styles4.input}
+  />
+        <View4 style={styles4.actions}>
+          <ActionButton
+    label={dirty ? "SAVE & REFRESH" : "SAVED"}
+    busy={!dirty || refreshing}
+    onPress={applyUrl}
+  />
+          <ActionButton
+    label="RESET URL"
+    onPress={() => {
+      setDraftUrl(DEFAULT_SOURCE);
+      onChange({ sourceUrl: DEFAULT_SOURCE });
+      onRefresh(DEFAULT_SOURCE);
+    }}
+  />
+        </View4>
+        <Text4 style={styles4.hint}>
+          Point this at any raw snapshot.json — a fork, a branch, or a local server while you are
+          testing the pipeline. Nothing is saved until you tap save, and the result of the fetch is
+          reported above.
+        </Text4>
+        <Fact label="SOURCE" value={snapshot?.source || "\u2014"} />
+      </Disclosure>
 
       <Text4 style={styles4.footnote}>
         Prices are dividend-adjusted daily closes from Financial Modeling Prep, refreshed after the
         US close. For information only — not investment advice.
       </Text4>
+
+      <SelectSheet
+    title="DEFAULT SORT ON OPEN"
+    options={sortOptions()}
+    value={settings.defaultSort}
+    visible={sortOpen}
+    onSelect={(v) => onChange({ defaultSort: v })}
+    onClose={() => setSortOpen(false)}
+  />
     </ScrollView2>;
 }
 var styles4 = StyleSheet4.create({
   wrap: { flex: 1 },
-  content: { paddingHorizontal: S.gutter, paddingBottom: 44, paddingTop: 6 },
-  title: { color: C.text, fontFamily: MONO, fontSize: 19, letterSpacing: 3 },
-  input: {
-    marginTop: 8,
-    padding: 11,
-    backgroundColor: C.surface,
-    borderWidth: S.hairline,
-    borderColor: C.line,
-    borderRadius: S.radius,
-    color: C.acid,
-    fontFamily: MONO,
-    fontSize: 10,
-    minHeight: 62
-  },
-  inlineActions: { flexDirection: "row", marginTop: 10, flexWrap: "wrap" },
-  hint: { color: C.faint, fontSize: 10, lineHeight: 16, marginTop: 10 },
-  fieldLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1, marginTop: 12, marginBottom: 8 },
-  chipWrap: { flexDirection: "row", flexWrap: "wrap", rowGap: 6 },
-  toggleRow: {
+  content: { paddingHorizontal: S.gutter, paddingBottom: 48, paddingTop: 6 },
+  title: { color: C.text, fontFamily: MONO, fontSize: T.title, letterSpacing: 3 },
+  selectRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -1074,60 +1246,69 @@ var styles4 = StyleSheet4.create({
     borderBottomWidth: S.hairline,
     borderBottomColor: C.lineSoft
   },
-  toggleText: { flex: 1, paddingRight: 14 },
-  toggleLabel: { color: C.text, fontSize: 13 },
-  toggleHint: { color: C.faint, fontSize: 10, marginTop: 3, lineHeight: 15 },
-  factRow: {
+  fieldLabel: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8 },
+  input: {
+    marginTop: 10,
+    padding: 12,
+    backgroundColor: C.surface,
+    borderWidth: S.hairline,
+    borderColor: C.line,
+    borderRadius: S.radius,
+    color: C.acid,
+    fontFamily: MONO,
+    fontSize: T.micro,
+    minHeight: 68
+  },
+  actions: { flexDirection: "row", flexWrap: "wrap", marginTop: 4 },
+  feedback: { marginTop: 12, marginHorizontal: -S.gutter },
+  hint: { color: C.faint, fontSize: T.micro, lineHeight: T.micro + 6, marginTop: 12 },
+  toggleRow: {
     flexDirection: "row",
+    alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: 7,
+    paddingVertical: 14,
     borderBottomWidth: S.hairline,
     borderBottomColor: C.lineSoft
   },
-  factKey: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1 },
-  factValue: { color: C.dim, fontFamily: MONO, fontSize: 10, flexShrink: 1, textAlign: "right" },
-  danger: {
-    borderWidth: S.hairline,
-    borderColor: C.down,
-    borderRadius: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8
+  toggleText: { flex: 1, paddingRight: 14 },
+  toggleLabel: { color: C.text, fontSize: T.body },
+  toggleHint: { color: C.faint, fontSize: T.micro, marginTop: 4, lineHeight: T.micro + 5 },
+  factRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingVertical: 9,
+    borderBottomWidth: S.hairline,
+    borderBottomColor: C.lineSoft
   },
-  dangerText: { color: C.down, fontFamily: MONO, fontSize: 10, letterSpacing: 1 },
+  factKey: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8 },
+  factValue: { color: C.dim, fontFamily: MONO, fontSize: T.micro, flexShrink: 1, textAlign: "right" },
   footnote: {
     color: C.faint,
-    fontSize: 10,
-    lineHeight: 16,
-    marginTop: 26,
+    fontSize: T.micro,
+    lineHeight: T.micro + 6,
+    marginTop: 28,
     borderTopWidth: S.hairline,
     borderTopColor: C.lineSoft,
-    paddingTop: 12
+    paddingTop: 14
   }
 });
 
 // app/src/screens/TickerScreen.js
-import React7, { useMemo as useMemo3, useState as useState6 } from "react";
-import {
-  Dimensions,
-  Image as Image2,
-  Pressable as Pressable5,
-  ScrollView as ScrollView3,
-  StyleSheet as StyleSheet6,
-  Text as Text6,
-  View as View6
-} from "react-native";
+import React7, { useMemo as useMemo3, useRef, useState as useState6 } from "react";
+import { Image as Image2, Pressable as Pressable4, ScrollView as ScrollView3, StyleSheet as StyleSheet6, Text as Text6, View as View6 } from "react-native";
 
 // app/src/components/PriceChart.js
 import React6, { useMemo as useMemo2, useState as useState5 } from "react";
 import { StyleSheet as StyleSheet5, Text as Text5, View as View5 } from "react-native";
-import Svg2, { Circle, Defs, Line, LinearGradient, Path, Stop } from "react-native-svg";
-var H = 190;
+import Svg3, { Circle, Defs as Defs2, Line, LinearGradient as LinearGradient2, Path, Stop as Stop2 } from "react-native-svg";
+var H = 200;
 var PAD_TOP = 14;
 var PAD_BOTTOM = 18;
-function PriceChart({ points, width }) {
+function PriceChart({ points, showHint, onScrubbed }) {
   const [cursor, setCursor] = useState5(null);
+  const [width, setWidth] = useState5(0);
   const geometry = useMemo2(() => {
-    if (!points || points.length < 2) return null;
+    if (!points || points.length < 2 || width <= 0) return null;
     let min = Infinity;
     let max = -Infinity;
     for (const p of points) {
@@ -1145,37 +1326,40 @@ function PriceChart({ points, width }) {
     const area = `${line} L${width} ${H - PAD_BOTTOM} L0 ${H - PAD_BOTTOM} Z`;
     return { min, max, xy, line, area, step };
   }, [points, width]);
-  if (!geometry) {
-    return <View5 style={[styles5.empty, { width, height: H }]}>
-        <Text5 style={styles5.emptyText}>NOT ENOUGH HISTORY</Text5>
-      </View5>;
-  }
-  const rising = points[points.length - 1].close >= points[0].close;
+  const rising = points && points.length > 1 && points[points.length - 1].close >= points[0].close;
   const stroke = rising ? C.acid : C.down;
   const onScrub = (evt) => {
+    if (!geometry) return;
     const x = evt.nativeEvent.locationX;
     const index = Math.max(0, Math.min(points.length - 1, Math.round(x / geometry.step)));
     setCursor((previous) => {
       if (previous !== index) tick();
       return index;
     });
+    if (onScrubbed) onScrubbed();
   };
-  const active = cursor === null ? null : points[cursor];
-  return <View5>
+  const active = cursor === null || !geometry ? null : points[cursor];
+  return <View5 onLayout={(e) => setWidth(e.nativeEvent.layout.width)}>
       <View5 style={styles5.readout}>
         {active ? <>
             <Text5 style={styles5.readoutPrice}>{fmtPrice(active.close)}</Text5>
             <Text5 style={styles5.readoutDate}>{active.date}</Text5>
           </> : <>
             <Text5 style={styles5.readoutRange}>
-              {fmtPrice(geometry.min)} — {fmtPrice(geometry.max)}
+              {geometry ? <>
+                  <Text5 style={styles5.extremaKey}>LOW </Text5>
+                  {fmtPrice(geometry.min)}
+                  <Text5 style={styles5.extremaKey}>   HIGH </Text5>
+                  {fmtPrice(geometry.max)}
+                </> : ""}
             </Text5>
-            <Text5 style={styles5.readoutDate}>{points.length} sessions</Text5>
+            <Text5 style={styles5.readoutDate}>{points ? `${points.length} sessions` : ""}</Text5>
           </>}
       </View5>
 
       <View5
-    style={{ width, height: H }}
+    style={{ height: H }}
+    accessibilityLabel={geometry ? `Price chart, ${points.length} sessions, low ${fmtPrice(geometry.min)}, high ${fmtPrice(geometry.max)}` : "Price chart unavailable"}
     onStartShouldSetResponder={() => true}
     onMoveShouldSetResponder={() => true}
     onResponderGrant={onScrub}
@@ -1183,36 +1367,46 @@ function PriceChart({ points, width }) {
     onResponderRelease={() => setCursor(null)}
     onResponderTerminate={() => setCursor(null)}
   >
-        <Svg2 width={width} height={H}>
-          <Defs>
-            <LinearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
-              <Stop offset="0" stopColor={stroke} stopOpacity="0.22" />
-              <Stop offset="1" stopColor={stroke} stopOpacity="0" />
-            </LinearGradient>
-          </Defs>
+        {geometry ? <Svg3 width={width} height={H}>
+            <Defs2>
+              <LinearGradient2 id="fade" x1="0" y1="0" x2="0" y2="1">
+                <Stop2 offset="0" stopColor={stroke} stopOpacity="0.22" />
+                <Stop2 offset="1" stopColor={stroke} stopOpacity="0" />
+              </LinearGradient2>
+            </Defs2>
 
-          <Line x1="0" y1={H - PAD_BOTTOM} x2={width} y2={H - PAD_BOTTOM} stroke={C.line} strokeWidth="1" />
-          <Path d={geometry.area} fill="url(#fade)" />
-          <Path d={geometry.line} fill="none" stroke={stroke} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
+            <Line x1="0" y1={H - PAD_BOTTOM} x2={width} y2={H - PAD_BOTTOM} stroke={C.line} strokeWidth="1" />
+            <Path d={geometry.area} fill="url(#fade)" />
+            <Path d={geometry.line} fill="none" stroke={stroke} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round" />
 
-          {active && <>
-              <Line
+            {active && <>
+                <Line
     x1={geometry.xy[cursor].x}
     y1={PAD_TOP - 8}
     x2={geometry.xy[cursor].x}
     y2={H - PAD_BOTTOM}
-    stroke={C.faint}
+    stroke={C.dim}
     strokeWidth="1"
   />
-              <Circle cx={geometry.xy[cursor].x} cy={geometry.xy[cursor].y} r="4" fill={stroke} />
-            </>}
-        </Svg2>
+                <Circle cx={geometry.xy[cursor].x} cy={geometry.xy[cursor].y} r="4.5" fill={stroke} />
+              </>}
+          </Svg3> : <View5 style={styles5.empty}>
+            <Text5 style={styles5.emptyText}>NOT ENOUGH HISTORY</Text5>
+          </View5>}
+
+        {
+    /* Shown until the reader scrubs their first chart, then never again --
+       an affordance nobody discovers is the same as one that is missing. */
+  }
+        {geometry && showHint && !active && <View5 pointerEvents="none" style={styles5.hint}>
+            <Text5 style={styles5.hintText}>DRAG TO INSPECT</Text5>
+          </View5>}
       </View5>
 
-      <View5 style={styles5.axis}>
-        <Text5 style={styles5.axisText}>{points[0].date}</Text5>
-        <Text5 style={styles5.axisText}>{points[points.length - 1].date}</Text5>
-      </View5>
+      {geometry && <View5 style={styles5.axis}>
+          <Text5 style={styles5.axisText}>{points[0].date}</Text5>
+          <Text5 style={styles5.axisText}>{points[points.length - 1].date}</Text5>
+        </View5>}
     </View5>;
 }
 var styles5 = StyleSheet5.create({
@@ -1222,232 +1416,318 @@ var styles5 = StyleSheet5.create({
     justifyContent: "space-between",
     marginBottom: 6
   },
-  readoutPrice: { color: C.text, fontFamily: MONO, fontSize: 15 },
-  readoutRange: { color: C.dim, fontFamily: MONO, fontSize: 11 },
-  readoutDate: { color: C.faint, fontFamily: MONO, fontSize: 10 },
-  axis: { flexDirection: "row", justifyContent: "space-between", marginTop: 4 },
-  axisText: { color: C.faint, fontFamily: MONO, fontSize: 9 },
-  empty: { alignItems: "center", justifyContent: "center" },
-  emptyText: { color: C.faint, fontFamily: MONO, fontSize: 11, letterSpacing: 1 }
+  readoutPrice: { color: C.text, fontFamily: MONO, fontSize: T.large },
+  readoutRange: { color: C.text, fontFamily: MONO, fontSize: T.micro },
+  extremaKey: { color: C.faint },
+  readoutDate: { color: C.faint, fontFamily: MONO, fontSize: T.micro },
+  axis: { flexDirection: "row", justifyContent: "space-between", marginTop: 6 },
+  axisText: { color: C.faint, fontFamily: MONO, fontSize: T.micro },
+  empty: { flex: 1, alignItems: "center", justifyContent: "center" },
+  emptyText: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 1 },
+  hint: { position: "absolute", top: 8, left: 0, right: 0, alignItems: "center" },
+  hintText: {
+    color: C.dim,
+    fontFamily: MONO,
+    fontSize: T.micro,
+    letterSpacing: 1.6,
+    backgroundColor: "rgba(20,21,24,0.85)",
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 5,
+    overflow: "hidden"
+  }
 });
 
 // app/src/screens/TickerScreen.js
+var RETURN_ROWS = [
+  ["1w", "1 WEEK"],
+  ["1m", "1 MONTH"],
+  ["3m", "3 MONTH"],
+  ["6m", "6 MONTH"],
+  ["ytd", "YTD"],
+  ["1y", "1 YEAR"],
+  ["2y", "2 YEAR"]
+];
 var MOMENTUM_ROWS = [
   ["3m", "3 MONTH"],
   ["6m", "6 MONTH"],
   ["9m", "9 MONTH"],
   ["12m", "12 MONTH"]
 ];
-var RETURN_ROWS = [
-  ["1w", "1 WEEK"],
-  ["1m", "1 MONTH"],
-  ["3m", "3 MONTH"],
-  ["6m", "6 MONTH"],
-  ["1y", "1 YEAR"],
-  ["2y", "2 YEAR"]
-];
-function TickerScreen({ ticker, snapshot, starred, onBack, onToggleStar }) {
+var EDGE = 28;
+var SWIPE = 60;
+function TickerScreen({
+  ticker,
+  snapshot,
+  starred,
+  onBack,
+  onToggleStar,
+  hintScrub,
+  onScrubbed
+}) {
   const [range, setRange] = useState6("1Y");
-  const skips = (snapshot.momentum || {}).skips || {};
-  const width = Dimensions.get("window").width - S.gutter * 2;
-  const sessions = (RANGES.find((r) => r.key === range) || RANGES[3]).sessions;
+  const swipeStart = useRef(0);
+  const skip = snapshot.skip || {};
+  const returnSkips = skip.returns || {};
+  const momentumSkips = skip.momentum || (snapshot.momentum || {}).skips || {};
+  const anySkip = Object.values(returnSkips).some((n) => n > 0);
+  const sessions = (RANGES.find((r) => r.key === range) || RANGES[4]).sessions;
   const points = useMemo3(
     () => seriesFor(ticker, snapshot.dates, sessions),
     [ticker, snapshot.dates, sessions]
   );
   const rangeChange = useMemo3(() => changeOver(points), [points]);
-  return <ScrollView3 style={styles6.wrap} contentContainerStyle={styles6.content}>
-      <View6 style={styles6.topBar}>
-        <Pressable5 onPress={onBack} hitSlop={12}>
-          <Text6 style={styles6.back}>‹ BACK</Text6>
-        </Pressable5>
-        <Pressable5
+  const suffix = (key) => returnSkips[key] > 0 ? ` \u2212${returnSkips[key]}D` : "";
+  return <View6 style={styles6.wrap}>
+      {
+    /* An edge swipe back, because reaching for a control in the top-left
+       corner one-handed is exactly what iOS taught people not to do. */
+  }
+      <View6
+    style={styles6.edge}
+    onStartShouldSetResponder={() => true}
+    onResponderGrant={(e) => {
+      swipeStart.current = e.nativeEvent.pageX;
+    }}
+    onResponderRelease={(e) => {
+      if (e.nativeEvent.pageX - swipeStart.current > SWIPE) onBack();
+    }}
+  />
+
+      <ScrollView3 style={styles6.scroll} contentContainerStyle={styles6.content}>
+        <View6 style={styles6.topBar}>
+          <Pressable4 onPress={onBack} hitSlop={slop(30)} accessibilityRole="button" accessibilityLabel="Back to list">
+            <Text6 style={styles6.back}>‹ BACK</Text6>
+          </Pressable4>
+          <Pressable4
     onPress={() => {
       (starred ? undo : confirm)();
       onToggleStar(ticker.symbol);
     }}
-    hitSlop={12}
+    hitSlop={slop(30)}
+    accessibilityRole="button"
+    accessibilityState={{ selected: starred }}
+    accessibilityLabel={starred ? "Remove from watchlist" : "Add to watchlist"}
   >
-          <Text6 style={[styles6.watch, starred && styles6.watching]}>
-            {starred ? "\u2605 WATCHING" : "\u2606 WATCH"}
-          </Text6>
-        </Pressable5>
-      </View6>
-
-      <View6 style={styles6.identity}>
-        {!!ticker.logo && <Image2 source={{ uri: ticker.logo }} style={styles6.logo} resizeMode="contain" />}
-        <View6 style={styles6.identityText}>
-          <Text6 style={styles6.symbol}>{ticker.symbol}</Text6>
-          <Text6 style={styles6.name} numberOfLines={2}>{ticker.name}</Text6>
+            <Text6 style={[styles6.watch, starred && styles6.watching]}>
+              {starred ? "\u2605 WATCHING" : "\u2606 WATCH"}
+            </Text6>
+          </Pressable4>
         </View6>
-      </View6>
 
-      <Text6 style={styles6.meta}>
-        {ticker.sector.toUpperCase()}
-        {ticker.industry ? ` \xB7 ${ticker.industry.toUpperCase()}` : ""} · {ticker.exchange}
-      </Text6>
-
-      <View6 style={styles6.priceBlock}>
-        <View6>
-          <Text6 style={styles6.price}>{fmtPrice(ticker.price)}</Text6>
-          <Text6 style={[styles6.change, { color: tone(ticker.changePct) }]}>
-            {ticker.change >= 0 ? "+" : ""}{fmtNum(ticker.change)} ({fmtPct(ticker.changePct)})
-          </Text6>
+        <View6 style={styles6.identity}>
+          {!!ticker.logo && <View6 style={styles6.logoBox}>
+              <Image2 source={{ uri: ticker.logo }} style={styles6.logo} resizeMode="contain" />
+            </View6>}
+          <View6 style={styles6.identityText}>
+            <Text6 style={styles6.symbol} accessibilityRole="header">{ticker.symbol}</Text6>
+            <Text6 style={styles6.name} numberOfLines={2}>{ticker.name}</Text6>
+          </View6>
         </View6>
-        {
+
+        <Text6 style={styles6.meta}>
+          {ticker.sector.toUpperCase()}
+          {ticker.industry ? ` \xB7 ${ticker.industry.toUpperCase()}` : ""} · {ticker.exchange}
+        </Text6>
+
+        <View6 style={styles6.priceBlock}>
+          <View6>
+            <Text6 style={styles6.price}>{fmtPrice(ticker.price)}</Text6>
+            <Text6 style={[styles6.change, { color: tone(ticker.changePct) }]}>
+              {ticker.change >= 0 ? "+" : ""}{fmtNum(ticker.change)} ({fmtPct(ticker.changePct)})
+            </Text6>
+          </View6>
+          {
     /* A size, not a ranking -- so it belongs with the company, not in a
        section that is otherwise nothing but #n placings. */
   }
-        <View6 style={styles6.capBlock}>
-          <Text6 style={styles6.capLabel}>MARKET CAP</Text6>
-          <Text6 style={styles6.capValue}>{fmtCap(ticker.marketCap)}</Text6>
+          <View6 style={styles6.capBlock}>
+            <Text6 style={styles6.capLabel}>MARKET CAP</Text6>
+            <Text6 style={styles6.capValue}>{fmtCap(ticker.marketCap)}</Text6>
+          </View6>
         </View6>
-      </View6>
 
-      <View6 style={styles6.rangeRow}>
-        {RANGES.map((r) => <Chip
+        <ChipRow accessibilityLabel="Chart range">
+          {RANGES.map((r) => <Chip
     key={r.key}
     compact
     label={r.key}
     active={r.key === range}
     onPress={() => setRange(r.key)}
+    accessibilityLabel={`${r.key} chart range`}
   />)}
-      </View6>
+        </ChipRow>
 
-      <View6 style={styles6.chartHead}>
-        <Text6 style={styles6.chartLabel}>{range} CHANGE</Text6>
-        <Text6 style={[styles6.chartChange, { color: tone(rangeChange) }]}>
-          {fmtPct(rangeChange)}
-        </Text6>
-      </View6>
+        <View6 style={styles6.chartHead}>
+          <Text6 style={styles6.chartLabel}>{range} CHANGE</Text6>
+          <Text6 style={[styles6.chartChange, { color: tone(rangeChange) }]}>{fmtPct(rangeChange)}</Text6>
+        </View6>
 
-      <PriceChart points={points} width={width} />
+        <PriceChart points={points} showHint={hintScrub} onScrubbed={onScrubbed} />
 
-      <SectionTitle>RETURNS</SectionTitle>
-      <View6 style={styles6.grid}>
-        {RETURN_ROWS.map(([key, label]) => <Stat
+        <SectionTitle>RETURNS</SectionTitle>
+        <View6 style={styles6.grid}>
+          {RETURN_ROWS.map(([key, label]) => <Stat
     key={key}
-    label={label}
+    label={`${label}${suffix(key)}`}
     value={fmtPct(ticker.returns[key])}
     color={tone(ticker.returns[key])}
+    reason={missingReason(key)}
   />)}
-      </View6>
+        </View6>
+        {anySkip && <Text6 style={styles6.note}>
+            −nD means the window stops n sessions short of today. Short-term moves tend to reverse
+            rather than persist, so every window long enough to afford it leaves its most recent
+            stretch out — the same rule everywhere, scaled to each window's length.
+          </Text6>}
 
-      <SectionTitle>RISK</SectionTitle>
-      <View6 style={styles6.grid}>
-        <Stat label="VOL 30D" value={fmtPct(ticker.volatility["30d"], 1)} />
-        <Stat label="VOL 90D" value={fmtPct(ticker.volatility["90d"], 1)} />
-        <Stat label="VOL 1Y" value={fmtPct(ticker.volatility["1y"], 1)} />
-        <Stat
+        <SectionTitle>RISK</SectionTitle>
+        <View6 style={styles6.grid}>
+          <Stat label="VOL 30D" value={fmtMagnitude(ticker.volatility["30d"])} reason={missingReason("30d")} />
+          <Stat label="VOL 90D" value={fmtMagnitude(ticker.volatility["90d"])} reason={missingReason("90d")} />
+          <Stat label="VOL 1Y" value={fmtMagnitude(ticker.volatility["1y"])} reason={missingReason("1y")} />
+          <Stat
     label="MAX DD 1Y"
-    value={fmtPct(ticker.maxDrawdown1y, 1)}
-    color={ticker.maxDrawdown1y === null ? C.text : C.down}
+    value={fmtMagnitude(ticker.maxDrawdown1y)}
+    color={ticker.maxDrawdown1y === null ? void 0 : C.down}
+    reason={missingReason("maxDrawdown")}
   />
-        <Stat label="RETURN/RISK" value={fmtNum(ticker.riskAdjusted1y, 2)} />
-      </View6>
+          <Stat label="RETURN/RISK" value={fmtNum(ticker.riskAdjusted1y, 2)} reason={missingReason("riskAdjusted")} />
+        </View6>
 
-      <SectionTitle>MOMENTUM</SectionTitle>
-      <View6 style={styles6.grid}>
-        <Stat label="SCORE" value={fmtNum(ticker.momentumScore, 0)} color={C.acid} width="50%" />
-        <Stat
+        <Disclosure label="HOW RISK IS MEASURED ›">
+          <Text6 style={styles6.prose}>
+            Volatility is the standard deviation of daily log returns over the window, annualised.
+            It is a magnitude, not a direction — 30% means the price typically moves that much in a
+            year either way, which is why it carries no sign.
+          </Text6>
+          <Text6 style={styles6.prose}>
+            Max drawdown is the deepest peak-to-trough fall within the last year, measured on closing
+            prices. It answers what holding through the worst stretch would have felt like, which an
+            annual return on its own hides.
+          </Text6>
+          <Text6 style={styles6.prose}>
+            Return/risk divides the 1-year return by 1-year volatility: how much movement was
+            rewarded per unit of movement endured. There is no risk-free rate in it, so it compares
+            these tickers against each other rather than being a Sharpe ratio.
+          </Text6>
+        </Disclosure>
+
+        <SectionTitle>MOMENTUM</SectionTitle>
+        <View6 style={styles6.grid}>
+          <Stat
+    label="SCORE"
+    value={fmtNum(ticker.momentumScore, 0)}
+    color={C.acid}
+    width="50%"
+    reason={missingReason("momentum")}
+  />
+          <Stat
     label={`RANK OF ${snapshot.universeSize}`}
     value={fmtRank(ticker.ranks.momentum)}
     width="50%"
+    reason={missingReason("momentum")}
   />
-      </View6>
-
-      {
-    /* The windows the score is built from, with the skip stated on each
-       rather than left to the disclosure. A reader who never opens the
-       explanation should still never mistake these for the trailing
-       returns above. */
-  }
-      <View6 style={styles6.windows}>
-        <View6 style={styles6.windowHead}>
-          <Text6 style={styles6.windowHeadText}>WINDOW</Text6>
-          <Text6 style={styles6.windowHeadText}>SKIPPED</Text6>
-          <Text6 style={[styles6.windowHeadText, styles6.windowHeadRight]}>RETURN</Text6>
         </View6>
-        {MOMENTUM_ROWS.map(([key, label]) => {
-    const skip = skips[key];
+
+        {
+    /* The windows the score is built from, with the skip stated on each
+       rather than left to the disclosure. */
+  }
+        <View6 style={styles6.windows}>
+          <View6 style={styles6.windowHead}>
+            <Text6 style={styles6.windowHeadText}>WINDOW</Text6>
+            <Text6 style={styles6.windowHeadText}>SKIPPED</Text6>
+            <Text6 style={[styles6.windowHeadText, styles6.windowHeadRight]}>RETURN</Text6>
+          </View6>
+          {MOMENTUM_ROWS.map(([key, label]) => {
+    const s = momentumSkips[key];
     const value = (ticker.momentumReturns || {})[key];
     return <View6 key={key} style={styles6.windowRow}>
-              <Text6 style={styles6.windowLabel}>{label}</Text6>
-              <Text6 style={styles6.windowSkip}>
-                {skip === void 0 ? "\u2014" : skip === 0 ? "none" : `last ${skip}d`}
-              </Text6>
-              <Text6 style={[styles6.windowValue, { color: tone(value) }]}>{fmtPct(value)}</Text6>
-            </View6>;
+                <Text6 style={styles6.windowLabel}>{label}</Text6>
+                <Text6 style={styles6.windowSkip}>
+                  {s === void 0 ? "\u2014" : s === 0 ? "none" : `last ${s}d`}
+                </Text6>
+                <Text6 style={[styles6.windowValue, { color: tone(value) }]}>{fmtPct(value)}</Text6>
+              </View6>;
   })}
-      </View6>
+        </View6>
 
-      <Text6 style={styles6.windowNote}>
-        These stop short of today. The RETURNS above run to the latest close — momentum is the
-        only figure here that skips anything.
-      </Text6>
+        <Disclosure label="HOW MOMENTUM WORKS ›">
+          <Text6 style={styles6.prose}>
+            Four returns are measured for every company: 3, 6, 9 and 12 months, each stopping short
+            of today rather than running to the last close.
+          </Text6>
+          <Text6 style={styles6.prose}>
+            The skip scales with the window at 20 sessions per 250, so the 12-month figure leaves out
+            the last 20 sessions and the 3-month one only the last 5. A single fixed month would take
+            a twelfth off the yearly window but a third off the quarterly one — a far heavier hand on
+            the short end than the long.
+          </Text6>
+          <Text6 style={styles6.prose}>
+            This ticker is ranked against the other {snapshot.universeSize - 1} on each of those four
+            windows, and the four placings are averaged and rescaled so 100 is the strongest of the{" "}
+            {snapshot.universeSize}. A high score means winning across every timeframe, not spiking
+            in one.
+          </Text6>
+          <Text6 style={styles6.prose}>
+            It stays blank until a company has traded about 13 months — the 12-month window plus the
+            skipped one. Scoring on whichever windows happened to exist would be a different measure
+            wearing the same name.
+          </Text6>
+        </Disclosure>
 
-      <Disclosure label="HOW MOMENTUM WORKS ›">
-        <Text6 style={styles6.prose}>
-          Four returns are measured for every company: 3, 6, 9 and 12 months. Each stops short of
-          today rather than running to the last close, because very short-term moves tend to reverse
-          rather than persist — so the most recent stretch is skipped instead of counted.
-        </Text6>
-        <Text6 style={styles6.prose}>
-          The skip scales with the window at 20 sessions per 250, so the 12-month figure leaves out
-          the last 20 sessions and the 3-month one only the last 5. A single fixed month would take
-          a twelfth off the yearly window but a third off the quarterly one — a far heavier hand on
-          the short end than the long.
-        </Text6>
-        <Text6 style={styles6.prose}>
-          This ticker is then ranked against the other {snapshot.universeSize - 1} on each of those
-          four windows, and the four placings are averaged and rescaled so 100 is the strongest of
-          the {snapshot.universeSize}. A high score means winning across every timeframe, not
-          spiking in one.
-        </Text6>
-        <Text6 style={styles6.prose}>
-          It stays blank until a company has traded about 13 months — the 12-month window plus the
-          skipped one. Scoring on whichever windows happened to exist would be a different measure
-          wearing the same name.
-        </Text6>
-      </Disclosure>
+        <SectionTitle>RANK IN TOP {snapshot.universeSize}</SectionTitle>
+        <View6 style={styles6.grid}>
+          <Stat label="MARKET CAP" value={fmtRank(ticker.ranks.marketCap)} color={C.acid} />
+          <Stat label="1 MONTH" value={fmtRank(ticker.ranks.return_1m)} />
+          <Stat label="3 MONTH" value={fmtRank(ticker.ranks.return_3m)} />
+          <Stat label="6 MONTH" value={fmtRank(ticker.ranks.return_6m)} />
+          <Stat label="YTD" value={fmtRank(ticker.ranks.return_ytd)} />
+          <Stat label="1 YEAR" value={fmtRank(ticker.ranks.return_1y)} />
+          <Stat label="RETURN/RISK" value={fmtRank(ticker.ranks.riskAdjusted)} />
+          <Stat label="LOW VOL" value={fmtRank(ticker.ranks.volatility)} />
+        </View6>
 
-      <SectionTitle>RANK IN TOP {snapshot.universeSize}</SectionTitle>
-      <View6 style={styles6.grid}>
-        <Stat label="MARKET CAP" value={fmtRank(ticker.ranks.marketCap)} color={C.acid} />
-        <Stat label="1 MONTH" value={fmtRank(ticker.ranks.return_1m)} />
-        <Stat label="3 MONTH" value={fmtRank(ticker.ranks.return_3m)} />
-        <Stat label="6 MONTH" value={fmtRank(ticker.ranks.return_6m)} />
-        <Stat label="1 YEAR" value={fmtRank(ticker.ranks.return_1y)} />
-        <Stat label="RETURN/RISK" value={fmtRank(ticker.ranks.riskAdjusted)} />
-        <Stat label="LOW VOL" value={fmtRank(ticker.ranks.volatility)} />
-      </View6>
-
-      <Text6 style={styles6.footnote}>
-        Dividend-adjusted closes, {ticker.firstSession} to {ticker.asOf}. Volatility is annualised
-        from daily log returns; return/risk is the 1Y return over 1Y volatility. A blank figure means
-        too little history to fill that window.
-      </Text6>
-    </ScrollView3>;
+        <Text6 style={styles6.footnote}>
+          Dividend-adjusted closes, {ticker.firstSession} to {ticker.asOf}.
+        </Text6>
+      </ScrollView3>
+    </View6>;
 }
 var styles6 = StyleSheet6.create({
   wrap: { flex: 1 },
-  content: { paddingHorizontal: S.gutter, paddingBottom: 40 },
+  scroll: { flex: 1 },
+  content: { paddingHorizontal: S.gutter, paddingBottom: 44 },
+  edge: { position: "absolute", left: 0, top: 0, bottom: 0, width: EDGE, zIndex: 5 },
   topBar: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingTop: 4,
+    paddingTop: 6,
     paddingBottom: 16
   },
-  back: { color: C.dim, fontFamily: MONO, fontSize: 11, letterSpacing: 1 },
-  watch: { color: C.dim, fontFamily: MONO, fontSize: 11, letterSpacing: 1 },
+  back: { color: C.dim, fontFamily: MONO, fontSize: T.small, letterSpacing: 1 },
+  watch: { color: C.dim, fontFamily: MONO, fontSize: T.small, letterSpacing: 1 },
   watching: { color: C.acid },
   identity: { flexDirection: "row", alignItems: "center" },
-  logo: { width: 40, height: 40, borderRadius: 7, backgroundColor: C.surfaceHi, marginRight: 12 },
+  logoBox: {
+    width: 46,
+    height: 46,
+    borderRadius: 9,
+    backgroundColor: C.surfaceHi,
+    borderWidth: S.hairline,
+    borderColor: C.line,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 13,
+    overflow: "hidden"
+  },
+  logo: { width: 34, height: 34 },
   identityText: { flex: 1 },
-  symbol: { color: C.text, fontFamily: MONO, fontSize: 24, letterSpacing: 2 },
-  name: { color: C.dim, fontSize: 12, marginTop: 3 },
-  meta: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 0.8, marginTop: 10 },
+  symbol: { color: C.text, fontFamily: MONO, fontSize: 26, letterSpacing: 2 },
+  name: { color: C.dim, fontSize: T.body, marginTop: 4 },
+  meta: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.6, marginTop: 11 },
   priceBlock: {
     marginTop: 18,
     marginBottom: 16,
@@ -1455,40 +1735,14 @@ var styles6 = StyleSheet6.create({
     alignItems: "flex-end",
     justifyContent: "space-between"
   },
-  capBlock: { alignItems: "flex-end", paddingBottom: 3 },
-  capLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 0.8 },
-  capValue: { color: C.text, fontFamily: MONO, fontSize: 16, marginTop: 3 },
-  prose: { color: C.dim, fontSize: 11, lineHeight: 18, marginBottom: 10 },
-  price: { color: C.text, fontFamily: MONO, fontSize: 34 },
-  change: { fontFamily: MONO, fontSize: 13, marginTop: 4 },
-  rangeRow: { flexDirection: "row", marginBottom: 14 },
+  price: { color: C.text, fontFamily: MONO, fontSize: T.display },
+  change: { fontFamily: MONO, fontSize: T.body, marginTop: 5 },
+  capBlock: { alignItems: "flex-end", paddingBottom: 4 },
+  capLabel: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.6 },
+  capValue: { color: C.text, fontFamily: MONO, fontSize: T.large, marginTop: 4 },
   chartHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline" },
-  chartLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1.4 },
-  chartChange: { fontFamily: MONO, fontSize: 13 },
-  windows: {
-    marginTop: 12,
-    borderTopWidth: S.hairline,
-    borderTopColor: C.line
-  },
-  windowHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingTop: 10,
-    paddingBottom: 4
-  },
-  windowHeadText: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1, flex: 1 },
-  windowHeadRight: { textAlign: "right" },
-  windowRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 7,
-    borderTopWidth: S.hairline,
-    borderTopColor: C.lineSoft
-  },
-  windowLabel: { color: C.dim, fontFamily: MONO, fontSize: 11, flex: 1 },
-  windowSkip: { color: C.faint, fontFamily: MONO, fontSize: 11, flex: 1 },
-  windowValue: { fontFamily: MONO, fontSize: 12, flex: 1, textAlign: "right" },
-  windowNote: { color: C.faint, fontSize: 10, lineHeight: 16, marginTop: 10 },
+  chartLabel: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 1.2 },
+  chartChange: { fontFamily: MONO, fontSize: T.body },
   grid: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -1497,10 +1751,26 @@ var styles6 = StyleSheet6.create({
     paddingTop: 4,
     marginTop: 8
   },
+  note: { color: C.faint, fontSize: T.micro, lineHeight: T.micro + 6, marginTop: 10 },
+  prose: { color: C.dim, fontSize: T.small, lineHeight: T.small + 7, marginBottom: 11 },
+  windows: { marginTop: 12, borderTopWidth: S.hairline, borderTopColor: C.line },
+  windowHead: { flexDirection: "row", alignItems: "center", paddingTop: 10, paddingBottom: 4 },
+  windowHeadText: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8, flex: 1 },
+  windowHeadRight: { textAlign: "right" },
+  windowRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 9,
+    borderTopWidth: S.hairline,
+    borderTopColor: C.lineSoft
+  },
+  windowLabel: { color: C.dim, fontFamily: MONO, fontSize: T.small, flex: 1 },
+  windowSkip: { color: C.faint, fontFamily: MONO, fontSize: T.small, flex: 1 },
+  windowValue: { fontFamily: MONO, fontSize: T.body, flex: 1, textAlign: "right" },
   footnote: {
     color: C.faint,
-    fontSize: 10,
-    lineHeight: 16,
+    fontSize: T.micro,
+    lineHeight: T.micro + 5,
     marginTop: 26,
     borderTopWidth: S.hairline,
     borderTopColor: C.lineSoft,
@@ -1509,7 +1779,7 @@ var styles6 = StyleSheet6.create({
 });
 
 // app/src/screens/WatchlistScreen.js
-import React8, { useMemo as useMemo4, useState as useState7 } from "react";
+import React8, { useMemo as useMemo4 } from "react";
 import { FlatList as FlatList2, RefreshControl as RefreshControl2, StyleSheet as StyleSheet7, Text as Text7, View as View7 } from "react-native";
 function WatchlistScreen({
   tickers,
@@ -1518,17 +1788,17 @@ function WatchlistScreen({
   onOpen,
   onToggleStar,
   onRefresh,
-  refreshing
+  refreshing,
+  listState,
+  onListState,
+  listRef
 }) {
-  const [sortKey, setSortKey] = useState7("change");
+  const { sortKey } = listState;
   const held = useMemo4(
     () => tickers.filter((t) => watchlist.includes(t.symbol)),
     [tickers, watchlist]
   );
-  const rows = useMemo4(
-    () => arrange(held, { sortKey, direction: "desc" }),
-    [held, sortKey]
-  );
+  const rows = useMemo4(() => arrange(held, { sortKey, direction: "desc" }), [held, sortKey]);
   const average = useMemo4(() => {
     if (!held.length) return null;
     return held.reduce((sum, t) => sum + (t.changePct || 0), 0) / held.length;
@@ -1536,33 +1806,38 @@ function WatchlistScreen({
   const sort = sortByKey(sortKey);
   return <View7 style={styles7.wrap}>
       <View7 style={styles7.header}>
-        <View7>
-          <Text7 style={styles7.title}>WATCHLIST</Text7>
+        <View7 style={styles7.headerText}>
+          <Text7 style={styles7.title} accessibilityRole="header">WATCHLIST</Text7>
           <Text7 style={styles7.subtitle}>
             {held.length} {held.length === 1 ? "TICKER" : "TICKERS"} TRACKED
           </Text7>
         </View7>
-        {average !== null && <View7 style={styles7.avgBox}>
-            <Text7 style={styles7.avgLabel}>AVG 1D</Text7>
+        {average !== null && <View7
+    style={styles7.avgBox}
+    accessibilityLabel={`Equal weight average move today, ${fmtPct(average)}`}
+  >
+            <Text7 style={styles7.avgLabel}>EQUAL-WEIGHT AVG 1D</Text7>
             <Text7 style={[styles7.avgValue, { color: tone(average) }]}>{fmtPct(average)}</Text7>
           </View7>}
       </View7>
 
-      {held.length > 0 && <ChipRow>
+      {held.length > 0 && <ChipRow accessibilityLabel="Sort watchlist by metric">
           {SORTS.map((s) => <Chip
     key={s.key}
     label={s.short}
     active={s.key === sortKey}
-    onPress={() => setSortKey(s.key)}
+    onPress={() => onListState({ sortKey: s.key })}
+    accessibilityLabel={s.key === sortKey ? `${s.label}, selected` : `Sort by ${s.label}`}
   />)}
         </ChipRow>}
 
       <FlatList2
+    ref={listRef}
     data={rows}
     keyExtractor={(t) => t.symbol}
     renderItem={({ item, index }) => <TickerRow_default
       ticker={item}
-      position={index + 1}
+      position={item.ranks[sort.rank] ?? index + 1}
       sort={sort}
       settings={settings}
       starred
@@ -1572,7 +1847,7 @@ function WatchlistScreen({
     refreshControl={<RefreshControl2 refreshing={refreshing} onRefresh={onRefresh} tintColor={C.acid} />}
     ListEmptyComponent={<Empty
       title="NOTHING TRACKED YET"
-      hint="Tap the + beside any row on the Ranks screen, or open a ticker and tap WATCH."
+      hint="Tap the star beside any row on the Ranks screen, or open a ticker and tap WATCH."
     />}
     contentContainerStyle={rows.length ? null : { flexGrow: 1 }}
   />
@@ -1588,49 +1863,80 @@ var styles7 = StyleSheet7.create({
     paddingTop: 6,
     paddingBottom: 14
   },
-  title: { color: C.text, fontFamily: MONO, fontSize: 19, letterSpacing: 3 },
-  subtitle: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1, marginTop: 4 },
+  headerText: { flexShrink: 1, paddingRight: 12 },
+  title: { color: C.text, fontFamily: MONO, fontSize: T.title, letterSpacing: 3 },
+  subtitle: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.8, marginTop: 6 },
   avgBox: { alignItems: "flex-end" },
-  avgLabel: { color: C.faint, fontFamily: MONO, fontSize: 9, letterSpacing: 1 },
-  avgValue: { fontFamily: MONO, fontSize: 15, marginTop: 3 }
+  avgLabel: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 0.6 },
+  avgValue: { fontFamily: MONO, fontSize: T.large, marginTop: 4 }
 });
 
 // app/App.js
 var TABS = [
   { key: "ranks", label: "RANKS" },
   { key: "watchlist", label: "WATCH" },
-  { key: "settings", label: "CONFIG" }
+  { key: "settings", label: "SETTINGS" }
 ];
 var SPARK_SESSIONS = 90;
 var SPARK_POINTS = 24;
+var FEEDBACK_MS = 6e3;
+var UNDO_MS = 6e3;
 function App() {
-  const [ready, setReady] = useState8(false);
-  const [settings, setSettings] = useState8(DEFAULT_SETTINGS);
-  const [watchlist, setWatchlist] = useState8([]);
-  const [snapshot, setSnapshot] = useState8(null);
-  const [tab, setTab] = useState8("ranks");
-  const [openSymbol, setOpenSymbol] = useState8(null);
-  const [refreshing, setRefreshing] = useState8(false);
-  const [notice, setNotice] = useState8(null);
-  const [fatal, setFatal] = useState8(null);
-  const [lastFetched, setLastFetched] = useState8(null);
-  const settingsRef = useRef(settings);
+  const [ready, setReady] = useState7(false);
+  const [settings, setSettings] = useState7(DEFAULT_SETTINGS);
+  const [watchlist, setWatchlist] = useState7([]);
+  const [snapshot, setSnapshot] = useState7(null);
+  const [tab, setTab] = useState7("ranks");
+  const [openSymbol, setOpenSymbol] = useState7(null);
+  const [refreshing, setRefreshing] = useState7(false);
+  const [notice, setNotice] = useState7(null);
+  const [fatal, setFatal] = useState7(null);
+  const [lastFetched, setLastFetched] = useState7(null);
+  const [refreshResult, setRefreshResult] = useState7(null);
+  const [undoItem, setUndoItem] = useState7(null);
+  const [ranksState, setRanksState] = useState7({
+    sortKey: DEFAULT_SETTINGS.defaultSort,
+    direction: "desc",
+    query: "",
+    sector: "All"
+  });
+  const [watchState, setWatchState] = useState7({ sortKey: "change" });
+  const ranksList = useRef2(null);
+  const watchList = useRef2(null);
+  const settingsRef = useRef2(settings);
   settingsRef.current = settings;
+  const patchRanks = useCallback((p) => setRanksState((prev) => ({ ...prev, ...p })), []);
+  const patchWatch = useCallback((p) => setWatchState((prev) => ({ ...prev, ...p })), []);
   useEffect(() => {
     setHapticsEnabled(settings.haptics);
   }, [settings.haptics]);
-  const refresh = useCallback(async () => {
+  useEffect(() => {
+    if (!refreshResult) return void 0;
+    const timer = setTimeout(() => setRefreshResult(null), FEEDBACK_MS);
+    return () => clearTimeout(timer);
+  }, [refreshResult]);
+  useEffect(() => {
+    if (!undoItem) return void 0;
+    const timer = setTimeout(() => setUndoItem(null), UNDO_MS);
+    return () => clearTimeout(timer);
+  }, [undoItem]);
+  const refresh = useCallback(async (urlOverride) => {
+    const url = typeof urlOverride === "string" ? urlOverride : settingsRef.current.sourceUrl;
     setRefreshing(true);
     try {
-      const result = await fetchSnapshot(settingsRef.current.sourceUrl);
+      const result = await fetchSnapshot(url);
       setSnapshot(result.snapshot);
       setFatal(null);
       setNotice(
         result.fromCache ? `OFFLINE \u2014 SHOWING CACHED ${result.snapshot.dataDate} (${result.error})` : null
       );
       if (result.fetchedAt) setLastFetched(new Date(result.fetchedAt).toISOString());
+      setRefreshResult(
+        result.fromCache ? { ok: false, message: `Could not reach the source (${result.error}). Showing the cached ${result.snapshot.dataDate} snapshot.` } : { ok: true, message: `Updated just now \u2014 ${result.snapshot.universeSize} tickers, data date ${result.snapshot.dataDate}.` }
+      );
     } catch (err) {
       setFatal(err.message || "Could not load the snapshot");
+      setRefreshResult({ ok: false, message: err.message || "Could not load the snapshot." });
     } finally {
       setRefreshing(false);
     }
@@ -1644,52 +1950,75 @@ function App() {
       ]);
       setSettings(storedSettings);
       setWatchlist(storedWatchlist);
+      patchRanks({ sortKey: storedSettings.defaultSort });
       if (cached) setSnapshot(cached);
       setReady(true);
-      if (storedSettings.refreshOnOpen || !cached) {
-        await refresh();
-      }
+      if (storedSettings.refreshOnOpen || !cached) await refresh();
     })();
-  }, [refresh]);
+  }, [refresh, patchRanks]);
   const updateSettings = useCallback((patch) => {
     setSettings((prev) => {
       const next = { ...prev, ...patch };
       saveSettings(next);
       return next;
     });
-  }, []);
+    if (patch.defaultSort) patchRanks({ sortKey: patch.defaultSort, direction: "desc" });
+  }, [patchRanks]);
   const toggleStar = useCallback((symbol) => {
     setWatchlist((prev) => {
-      const next = prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol];
+      const removing = prev.includes(symbol);
+      const next = removing ? prev.filter((s) => s !== symbol) : [...prev, symbol];
       saveWatchlist(next);
+      setUndoItem(removing ? symbol : null);
       return next;
     });
   }, []);
+  const undoRemove = useCallback(() => {
+    if (!undoItem) return;
+    setWatchlist((prev) => {
+      const next = prev.includes(undoItem) ? prev : [...prev, undoItem];
+      saveWatchlist(next);
+      return next;
+    });
+    setUndoItem(null);
+  }, [undoItem]);
   const clearWatchlist = useCallback(() => {
     setWatchlist([]);
     saveWatchlist([]);
+    setUndoItem(null);
   }, []);
   const resetAll = useCallback(async () => {
     await clearAll();
     setWatchlist([]);
     setSettings(DEFAULT_SETTINGS);
-    await refresh();
+    await refresh(DEFAULT_SETTINGS.sourceUrl);
   }, [refresh]);
+  const markScrubbed = useCallback(() => {
+    if (!settingsRef.current.hasScrubbed) updateSettings({ hasScrubbed: true });
+  }, [updateSettings]);
   const tickers = useMemo5(() => {
     if (!snapshot) return [];
     return snapshot.tickers.map((t) => {
       const points = seriesFor(t, snapshot.dates, SPARK_SESSIONS);
-      return {
-        ...t,
-        spark: downsample(points, SPARK_POINTS),
-        sparkChange: changeOver(points)
-      };
+      return { ...t, spark: downsample(points, SPARK_POINTS), sparkChange: changeOver(points) };
     });
   }, [snapshot]);
   const openTicker = useMemo5(
     () => tickers.find((t) => t.symbol === openSymbol) || null,
     [tickers, openSymbol]
   );
+  const onTab = (key) => {
+    if (key === tab) {
+      const list = key === "ranks" ? ranksList.current : key === "watchlist" ? watchList.current : null;
+      if (list) {
+        tick();
+        list.scrollToOffset({ offset: 0, animated: true });
+      }
+      return;
+    }
+    tick();
+    setTab(key);
+  };
   if (!ready || !snapshot && !fatal) {
     return <SafeAreaView style={styles8.app}>
         <StatusBar barStyle="light-content" />
@@ -1700,33 +2029,17 @@ function App() {
     return <SafeAreaView style={styles8.app}>
         <StatusBar barStyle="light-content" />
         <View8 style={styles8.fatal}>
-          <Text8 style={styles8.fatalTitle}>NO SNAPSHOT</Text8>
+          <Text8 style={styles8.fatalTitle} accessibilityRole="header">NO SNAPSHOT</Text8>
           <Text8 style={styles8.fatalText}>{fatal}</Text8>
-          <Text8 style={styles8.fatalHint}>
-            Check the snapshot URL under CONFIG, then try again.
-          </Text8>
-          <Pressable6 style={styles8.retry} onPress={refresh}>
-            <Text8 style={styles8.retryText}>RETRY</Text8>
-          </Pressable6>
-          <Pressable6 onPress={() => {
+          <Text8 style={styles8.fatalHint}>Check the snapshot URL under Settings, then try again.</Text8>
+          <View8 style={styles8.fatalActions}>
+            <ActionButton label={refreshing ? "RETRYING\u2026" : "RETRY"} busy={refreshing} onPress={() => refresh()} />
+            <ActionButton label="OPEN SETTINGS" onPress={() => {
       setFatal(null);
       setTab("settings");
-    }}>
-            <Text8 style={styles8.fatalLink}>OPEN CONFIG</Text8>
-          </Pressable6>
+    }} />
+          </View8>
         </View8>
-      </SafeAreaView>;
-  }
-  if (openTicker) {
-    return <SafeAreaView style={styles8.app}>
-        <StatusBar barStyle="light-content" />
-        <TickerScreen
-      ticker={openTicker}
-      snapshot={snapshot}
-      starred={watchlist.includes(openTicker.symbol)}
-      onBack={() => setOpenSymbol(null)}
-      onToggleStar={toggleStar}
-    />
       </SafeAreaView>;
   }
   const shared = {
@@ -1740,16 +2053,33 @@ function App() {
   return <SafeAreaView style={styles8.app}>
       <StatusBar barStyle="light-content" />
 
+      {
+    /* Every tab stays mounted and inactive ones are merely hidden.
+       Unmounting them would throw away scroll position and filters. */
+  }
       <View8 style={styles8.body}>
-        {tab === "ranks" && <RanksScreen
-    key={settings.defaultSort}
+        <View8 style={tab === "ranks" ? styles8.pane : styles8.paneHidden}>
+          <RanksScreen
     snapshot={snapshot}
     tickers={tickers}
     staleMessage={notice}
+    listState={ranksState}
+    onListState={patchRanks}
+    listRef={ranksList}
     {...shared}
-  />}
-        {tab === "watchlist" && <WatchlistScreen tickers={tickers} {...shared} />}
-        {tab === "settings" && <SettingsScreen
+  />
+        </View8>
+        <View8 style={tab === "watchlist" ? styles8.pane : styles8.paneHidden}>
+          <WatchlistScreen
+    tickers={tickers}
+    listState={watchState}
+    onListState={patchWatch}
+    listRef={watchList}
+    {...shared}
+  />
+        </View8>
+        <View8 style={tab === "settings" ? styles8.pane : styles8.paneHidden}>
+          <SettingsScreen
     settings={settings}
     onChange={updateSettings}
     snapshot={snapshot}
@@ -1758,28 +2088,53 @@ function App() {
     onClearWatchlist={clearWatchlist}
     onResetAll={resetAll}
     onRefresh={refresh}
-  />}
+    refreshing={refreshing}
+    refreshResult={refreshResult}
+  />
+        </View8>
+
+        {
+    /* Over the panes but inside the body, so the tab bar stays reachable
+       and the list underneath keeps its place. */
+  }
+        {openTicker && <View8 style={styles8.overlay}>
+            <TickerScreen
+    ticker={openTicker}
+    snapshot={snapshot}
+    starred={watchlist.includes(openTicker.symbol)}
+    onBack={() => setOpenSymbol(null)}
+    onToggleStar={toggleStar}
+    hintScrub={!settings.hasScrubbed}
+    onScrubbed={markScrubbed}
+  />
+          </View8>}
       </View8>
 
       {tab !== "ranks" && !!notice && <Banner text={notice} />}
 
-      <View8 style={styles8.tabBar}>
+      {!!undoItem && <Snackbar
+    text={`${undoItem} removed from watchlist`}
+    actionLabel="UNDO"
+    onAction={undoRemove}
+  />}
+
+      <View8 style={styles8.tabBar} accessibilityRole="tablist">
         {TABS.map((t) => {
     const active = t.key === tab;
-    return <Pressable6
+    return <Pressable5
       key={t.key}
       style={styles8.tab}
-      onPress={() => {
-        if (t.key !== tab) tick();
-        setTab(t.key);
-      }}
+      onPress={() => onTab(t.key)}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
+      accessibilityLabel={t.key === "watchlist" && watchlist.length ? `Watch, ${watchlist.length} tracked` : t.label}
     >
               <View8 style={[styles8.tabMark, active && styles8.tabMarkActive]} />
               <Text8 style={[styles8.tabLabel, active && styles8.tabLabelActive]}>
                 {t.label}
                 {t.key === "watchlist" && watchlist.length ? ` ${watchlist.length}` : ""}
               </Text8>
-            </Pressable6>;
+            </Pressable5>;
   })}
       </View8>
     </SafeAreaView>;
@@ -1787,33 +2142,26 @@ function App() {
 var styles8 = StyleSheet8.create({
   app: { flex: 1, backgroundColor: C.bg },
   body: { flex: 1 },
+  pane: { ...StyleSheet8.absoluteFillObject },
+  paneHidden: { ...StyleSheet8.absoluteFillObject, display: "none" },
+  overlay: { ...StyleSheet8.absoluteFillObject, backgroundColor: C.bg },
   tabBar: {
     flexDirection: "row",
     borderTopWidth: S.hairline,
     borderTopColor: C.line,
-    backgroundColor: C.surface,
-    paddingTop: 8,
-    paddingBottom: 6
+    backgroundColor: C.surface
   },
-  tab: { flex: 1, alignItems: "center", paddingVertical: 4 },
-  tabMark: { width: 16, height: 2, backgroundColor: "transparent", marginBottom: 6 },
+  // A full 44pt target even though the label is small.
+  tab: { flex: 1, alignItems: "center", justifyContent: "center", minHeight: S.tap, paddingVertical: 8 },
+  tabMark: { width: 18, height: 2, backgroundColor: "transparent", marginBottom: 7 },
   tabMarkActive: { backgroundColor: C.acid },
-  tabLabel: { color: C.faint, fontFamily: MONO, fontSize: 10, letterSpacing: 1.6 },
+  tabLabel: { color: C.faint, fontFamily: MONO, fontSize: T.micro, letterSpacing: 1.4 },
   tabLabelActive: { color: C.acid },
   fatal: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 34 },
-  fatalTitle: { color: C.text, fontFamily: MONO, fontSize: 15, letterSpacing: 2 },
-  fatalText: { color: C.down, fontFamily: MONO, fontSize: 11, marginTop: 12, textAlign: "center" },
-  fatalHint: { color: C.faint, fontSize: 11, marginTop: 14, textAlign: "center", lineHeight: 17 },
-  retry: {
-    marginTop: 22,
-    borderWidth: S.hairline,
-    borderColor: C.acid,
-    borderRadius: 6,
-    paddingHorizontal: 22,
-    paddingVertical: 9
-  },
-  retryText: { color: C.acid, fontFamily: MONO, fontSize: 11, letterSpacing: 2 },
-  fatalLink: { color: C.dim, fontFamily: MONO, fontSize: 10, letterSpacing: 1, marginTop: 18 }
+  fatalTitle: { color: C.text, fontFamily: MONO, fontSize: T.large, letterSpacing: 2 },
+  fatalText: { color: C.down, fontFamily: MONO, fontSize: T.small, marginTop: 14, textAlign: "center" },
+  fatalHint: { color: C.faint, fontSize: T.small, marginTop: 16, textAlign: "center", lineHeight: 19 },
+  fatalActions: { flexDirection: "row", flexWrap: "wrap", justifyContent: "center", marginTop: 18 }
 });
 export {
   App as default
