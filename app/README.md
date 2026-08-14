@@ -5,7 +5,25 @@ on an iPhone. No build step, no App Store, no accounts.
 
 ## Running it
 
-Generate a one-click Snack link:
+The shortest link uses Snack's `sourceUrl`, which loads a single file:
+
+```bash
+scripts/bundle_snack.sh                 # writes app/snack/App.js
+```
+
+```
+https://snack.expo.dev/?sourceUrl=<raw url to app/snack/App.js>
+  &dependencies=react-native-svg,@react-native-async-storage/async-storage
+  &platform=mydevice&theme=dark
+```
+
+`app/snack/App.js` is a **generated artifact** — edit `app/src/`, then
+regenerate. Pass `--data-branch BRANCH` to pin the bundled snapshot URL to a
+branch while previewing before a merge.
+
+### Or keep the project modular
+
+Generate a link that loads every module separately:
 
 ```bash
 python3 scripts/make_snack_url.py --branch main --check
@@ -71,6 +89,10 @@ serving yesterday's file for several minutes after a refresh lands.
 again to invert it. Below that, sector filters and a symbol/name search. Each
 row carries a rank, logo, 90-session sparkline, price and the metric being
 sorted on. Tap to open a ticker, press and hold to star it.
+
+The sparkline is coloured by its own 90-session direction, not by the day, so
+a stock can show a red trend line beside a green daily move — the line is
+telling you about the quarter, the number about today.
 
 Sorting is always best-first, which for the volatility column means the
 *lowest* — so `#1` reads the same way in every column.
