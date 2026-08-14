@@ -97,11 +97,13 @@ def dependency_versions(sdk: str) -> dict[str, str]:
     return {d: published.get(d, "*") for d in DEPENDENCIES}
 
 
-def save(code: str, sdk: str, versions: dict[str, str] | None = None) -> str:
-    versions = versions or {d: "*" for d in DEPENDENCIES}
+def save(code: str, sdk: str, versions: dict[str, str] | None = None,
+         name: str | None = None) -> str:
+    if versions is None:
+        versions = {d: "*" for d in DEPENDENCIES}
     payload = {
         "manifest": {
-            "name": NAME,
+            "name": name or NAME,
             "description": DESCRIPTION,
             "sdkVersion": sdk,
             "dependencies": dict(versions),
@@ -148,15 +150,24 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bundle", action="store_true")
     parser.add_argument("--sdk", default=None)
+    # The two flags below exist for bisecting a Snack that will not load. The
+    # SDK a Snack must target is whatever the installed Expo Go supports, and
+    # nothing reachable from here reports that -- so the only way to find it is
+    # to publish a trivial app at two SDKs and see which one opens.
+    parser.add_argument("--file", default=BUNDLE,
+                        help="publish this file instead of the app bundle")
+    parser.add_argument("--no-deps", action="store_true",
+                        help="publish with no dependencies, to rule them out")
+    parser.add_argument("--name", default=None)
     args = parser.parse_args()
 
     if args.bundle:
         subprocess.run(["scripts/bundle_snack.sh"], check=True)
 
     try:
-        code = open(BUNDLE, encoding="utf-8").read()
+        code = open(args.file, encoding="utf-8").read()
     except OSError:
-        print(f"{BUNDLE} is missing -- run scripts/bundle_snack.sh first.", file=sys.stderr)
+        print(f"{args.file} is missing -- run scripts/bundle_snack.sh first.", file=sys.stderr)
         return 1
 
     source = re.search(r"https://raw\.githubusercontent\.com[^'\"]*/data/", code)
@@ -168,7 +179,7 @@ def main() -> int:
         return 1
     print(f"Snack runtime: SDK {sdk}")
 
-    versions = dependency_versions(sdk)
+    versions = {} if args.no_deps else dependency_versions(sdk)
     for dep, version in versions.items():
         print(f"  {dep} @ {version}")
     unpinned = [d for d, v in versions.items() if v == "*"]
@@ -176,7 +187,7 @@ def main() -> int:
         print(f"Expo publishes no SDK {sdk} version for: {', '.join(unpinned)}", file=sys.stderr)
         return 1
 
-    snack_id = save(code, sdk, versions)
+    snack_id = save(code, sdk, versions, name=args.name)
     link = deep_link(snack_id)
     if not link:
         print(f"Saved as {snack_id}, but the runtime will not bind it.", file=sys.stderr)
