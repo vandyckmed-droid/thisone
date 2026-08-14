@@ -74,6 +74,12 @@ MIN_CALENDAR_SESSIONS = 200
 TRADING_DAYS_PER_YEAR = 252
 WINDOWS = {"1w": 5, "1m": 21, "3m": 63, "6m": 126, "1y": 252, "2y": 504}
 
+# Momentum deliberately ignores the most recent month. Very short-term moves
+# tend to reverse rather than persist, so a window running right up to today
+# measures noise on top of the trend. Skipping it is the standard construction.
+MOMENTUM_SKIP = 21
+MOMENTUM_WINDOWS = {"3m": 63, "6m": 126, "9m": 189, "12m": 252}
+
 # Names that betray a note, bond, preferred or depositary line rather than a
 # common share. FMP reports these with the *parent company's* market cap.
 NON_COMMON_MARKERS = (
@@ -320,6 +326,17 @@ def _window(closes: list[float], sessions: int) -> list[float] | None:
     return window
 
 
+def pct_change_skip(closes: list[float], sessions: int, skip: int) -> float | None:
+    """Return over `sessions`, measured to `skip` sessions ago rather than today."""
+    if len(closes) < sessions + skip + 1:
+        return None
+    end = closes[-1 - skip]
+    start = closes[-1 - skip - sessions]
+    if start <= 0:
+        return None
+    return (end / start - 1) * 100
+
+
 def annualised_vol(closes: list[float], sessions: int) -> float | None:
     window = _window(closes, sessions)
     if window is None:
@@ -377,6 +394,12 @@ def compute_metrics(entry: dict[str, Any], aligned: list[float | None],
         "changePct": round((price / previous - 1) * 100, 2) if previous > 0 else 0.0,
         "asOf": dated[-1][0],
         "returns": {k: (round(v, 2) if v is not None else None) for k, v in returns.items()},
+        # The skip-a-month windows momentum is built from, kept in the snapshot
+        # so the score can be checked rather than taken on trust.
+        "momentumReturns": {
+            label: _round(pct_change_skip(closes, n, MOMENTUM_SKIP))
+            for label, n in MOMENTUM_WINDOWS.items()
+        },
         "volatility": {
             "30d": _round(annualised_vol(closes, 30)),
             "90d": _round(annualised_vol(closes, 90)),
@@ -414,16 +437,32 @@ def apply_rankings(tickers: list[dict[str, Any]]) -> None:
     rank_by("volatility", lambda t: t["volatility"]["1y"], descending=False)
     rank_by("riskAdjusted", lambda t: t["riskAdjusted1y"], descending=True)
 
-    # Momentum blends the four medium-term horizons by average percentile, so a
-    # ticker missing one horizon is scored on the ones it has rather than dropped.
+    # Momentum blends the four skip-a-month horizons by average percentile.
+    # These per-horizon placings are not published as ranks of their own: the
+    # ranks the app shows are plain trailing returns, and two sets of
+    # near-identical numbers would invite exactly the confusion the score is
+    # meant to resolve.
     total = len(tickers)
+    horizons = list(MOMENTUM_WINDOWS)
+    placings: dict[str, dict[str, int]] = {t["symbol"]: {} for t in tickers}
+    for horizon in horizons:
+        scored = [t for t in tickers if t["momentumReturns"].get(horizon) is not None]
+        scored.sort(key=lambda t: t["momentumReturns"][horizon], reverse=True)
+        for position, ticker in enumerate(scored, start=1):
+            placings[ticker["symbol"]][horizon] = position
+
     for ticker in tickers:
-        places = [ticker["ranks"][f"return_{h}"] for h in ("1m", "3m", "6m", "1y")]
-        places = [p for p in places if p is not None]
-        ticker["momentumScore"] = (
-            round(100 * (1 - (sum(places) / len(places) - 1) / max(total - 1, 1)), 1)
-            if places else None
-        )
+        places = [placings[ticker["symbol"]].get(h) for h in horizons]
+        # The score is defined as a blend of all four horizons; computing it
+        # from whichever happen to be available would be a different statistic
+        # wearing the same name. A ticker without ~13 months of history -- the
+        # 12-month window plus the skipped month -- simply has no momentum yet.
+        if any(p is None for p in places):
+            ticker["momentumScore"] = None
+            continue
+        average = sum(places) / len(places)
+        ticker["momentumScore"] = round(100 * (1 - (average - 1) / max(total - 1, 1)), 1)
+
     rank_by("momentum", lambda t: t["momentumScore"], descending=True)
 
 
