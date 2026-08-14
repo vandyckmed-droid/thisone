@@ -1,7 +1,7 @@
 # Top 100
 
-Daily market-cap rankings for the 100 largest US common stocks, on your phone,
-with no backend.
+Daily rankings for 200 large US common stocks — the 100 largest by market cap,
+plus 100 more chosen to spread across sectors — on your phone, with no backend.
 
 ```
 FMP  ->  build_snapshot.py  ->  validated snapshot.json  ->  GitHub  ->  Expo Go
@@ -18,7 +18,9 @@ is no server, no database and no account anywhere in the loop.
 | Path | What it is |
 | --- | --- |
 | `scripts/build_snapshot.py` | The whole pipeline: universe, prices, metrics, validation, write |
-| `scripts/make_snack_url.py` | Prints a one-click Expo Snack link for `app/` |
+| `scripts/bundle_snack.sh` | Folds `app/` into the single-file `app/snack/App.js` |
+| `scripts/publish_snack.py` | Publishes that bundle as a Snack, prints a tap-to-open link |
+| `scripts/make_snack_url.py` | A Snack link that keeps the project modular, for editing |
 | `data/snapshot.json` | The published snapshot — the only file the app reads |
 | `.github/workflows/refresh-snapshot.yml` | Post-close refresh |
 | `app/` | React Native app for Expo Snack / Expo Go |
@@ -34,15 +36,15 @@ export FMP_API_KEY=your_key
 python3 scripts/build_snapshot.py
 ```
 
-It runs in about 30 seconds and does five things in order.
+It runs in about 45 seconds and does five things in order.
 
-**Builds the universe.** The FMP screener is asked for a candidate pool three
+**Builds the universe.** The FMP screener is asked for a candidate pool several
 times the size of the target, restricted to actively traded US common stocks on
 NYSE and NASDAQ.
 
 That pool needs real cleaning, because FMP reports every listing of an issuer
-with the issuer's *entire* market cap. Left alone, the top 100 fills up with
-duplicates and debt:
+with the issuer's *entire* market cap. Left alone, the top of the table fills up
+with duplicates and debt:
 
 | Symbol | What FMP calls it | Reported cap |
 | --- | --- | --- |
@@ -62,13 +64,72 @@ Three filters remove all of it:
 3. A minimum average dollar volume drops anything too thin to be a real
    large-cap listing.
 
+### Selecting the universe
+
+The universe is then built in two parts.
+
+The **core** is simply the largest `TOP_N` companies by market cap.
+
+The **expansion** is the algorithm below, which exists because taking the next
+`N` by market cap would just deepen whichever sectors are already largest —
+another dozen technology names before a second utility.
+
+```
+1. Sort the unselected candidates from largest to smallest market cap.
+2. Look at the next five.
+3. Select the one from the least-represented sector.
+4. Break ties by choosing the largest market cap.
+5. Update the sector counts and repeat.
+```
+
+Sector counts start from whatever the core already contains, so the expansion
+balances against the real starting position rather than from zero.
+
+**The lookahead is the whole character of it.** Choosing purely by smallest
+sector would trawl the entire tail for one more utility however far down it
+sat. Restricting the choice to the next five means a company still has to be
+roughly next in line by size to be picked at all, so the balancing happens
+between near-equals. The flip side is that it cannot reach a starved sector
+sitting forty places down, and a run of six same-sector names in a row will be
+taken in full.
+
+That makes the effect deliberately mild. Growing 100 → 200 at the default
+lookahead of 5 changes only four names versus pure market cap:
+
+| Sector | Pure market cap | Lookahead 5 | Lookahead 25 |
+| --- | --- | --- | --- |
+| Technology | 46 | 42 | 32 |
+| Financial Services | 33 | 34 | 32 |
+| Industrials | 31 | 31 | 32 |
+| Energy | 13 | 13 | 19 |
+| Utilities | 6 | 6 | 8 |
+| *largest sector share* | *23%* | *21%* | *16%* |
+| *names changed* | *—* | *4* | *15* |
+
+Widen `LOOKAHEAD` if you want the balancing to bite harder; it is an
+environment variable precisely so this is a dial rather than a rewrite.
+
+### Growing the universe
+
+Nothing structural has to change to get bigger:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `TOP_N` | `100` | The market-cap core |
+| `BALANCED_N` | `100` | Names added by the algorithm above |
+| `LOOKAHEAD` | `5` | How many candidates it weighs at a time |
+
+`BALANCED_N=0` gives a pure market-cap table of `TOP_N`. The candidate pool and
+the reserve size themselves off the target, so raising either number widens the
+screen automatically.
+
 **Downloads prices.** Roughly two years of dividend-adjusted daily closes per
 ticker, fetched concurrently with retry and backoff.
 
 **Computes metrics.** Returns over 1W/1M/3M/6M/YTD/1Y/2Y, annualised
 volatility over 30d/90d/1Y, 1-year max drawdown, a return-per-unit-of-risk
-ratio, a blended momentum score, and a rank for each of those across the
-universe. Rank 1 is always the desirable end, including for volatility, where
+ratio, a momentum score blending the 3/6/9/12-month returns that each stop a
+month short of today, and a rank for each of those across the universe. Rank 1 is always the desirable end, including for volatility, where
 it means the *lowest*.
 
 A window only produces a number when it is genuinely filled. A company that
@@ -106,7 +167,9 @@ previous snapshot left untouched                     exit 1, snapshot unchanged
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `FMP_API_KEY` | — | Required. `API_KEY` also works. |
-| `TOP_N` | `100` | Universe size |
+| `TOP_N` | `100` | Size of the market-cap core |
+| `BALANCED_N` | `100` | Names added by the sector-balancing algorithm |
+| `LOOKAHEAD` | `5` | Candidates the balancer weighs at a time |
 | `HISTORY_DAYS` | `760` | Calendar days of history requested |
 | `MAX_WORKERS` | `8` | Concurrent API requests |
 | `OUTPUT` | `data/snapshot.json` | Where to write |
@@ -123,7 +186,8 @@ only a bare array of closes rather than repeating 523 date strings.
   "schema": 1,
   "generatedAt": "2026-08-14T00:04:30+00:00",
   "dataDate": "2026-08-13",
-  "universeSize": 100,
+  "universeSize": 200,
+  "selection": { "core": 100, "balanced": 100, "lookahead": 5 },
   "sessions": 523,
   "dates": ["2024-07-15", "..."],          // shared calendar
   "tickers": [
@@ -155,7 +219,7 @@ only a bare array of closes rather than repeating 523 date strings.
 
 `history` is padded with `null` before a ticker's first session, so a recent
 listing charts from its IPO instead of dragging a flat line back through two
-years it never traded. At 100 tickers the file is about **417 KB**.
+years it never traded. At 200 tickers the file is about **839 KB**.
 
 ---
 
@@ -194,9 +258,13 @@ signal.
 
 ## 5. Expanding
 
-Raise `TOP_N`. Nothing else has to change — the structure is identical and the
-workflow accepts it as an input. A 400-ticker run produces a 1.6 MB file, which
-is still a single fetch.
+Raise `TOP_N` for a bigger market-cap core, or `BALANCED_N` for more of the
+sector-balanced expansion described above. Nothing else has to change.
+
+Size scales linearly at roughly 4 KB per ticker: 100 tickers is 425 KB, 200 is
+839 KB, 400 is about 1.6 MB. All of it is still one fetch, and the app caches
+the last good copy, so the practical ceiling is how long a cold open may take
+on a phone rather than anything structural.
 
 Splitting histories into per-ticker files is worth doing only once the single
 JSON actually becomes too big to fetch comfortably. Until then one file is one
