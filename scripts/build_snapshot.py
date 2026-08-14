@@ -9,7 +9,8 @@ GitHub with no backend in between.
 Pipeline stages
 ---------------
 1. universe   -- screen for eligible US common stocks, drop share-class and
-                 debt/preferred duplicates, keep the top N by market cap
+                 debt/preferred duplicates, take the top N by market cap, then
+                 extend it with names chosen to spread across sectors
 2. prices     -- pull ~2 years of dividend-adjusted daily closes per ticker
 3. metrics    -- returns, annualised volatility, drawdown, rankings
 4. validate   -- refuse to publish a snapshot that fails any sanity check
@@ -21,7 +22,9 @@ Only the standard library is used, so CI needs no dependency install.
 Environment
 -----------
 FMP_API_KEY / API_KEY   required
-TOP_N                   universe size (default 100)
+TOP_N                   size of the market-cap core (default 100)
+BALANCED_N              extra names chosen to spread sectors (default 100)
+LOOKAHEAD               candidates the balancer weighs at a time (default 5)
 HISTORY_DAYS            calendar days of history to request (default 760)
 OUTPUT                  snapshot path (default data/snapshot.json)
 MAX_WORKERS             concurrent API requests (default 8)
@@ -49,7 +52,14 @@ from typing import Any, Iterable
 API_ROOT = "https://financialmodelingprep.com/stable"
 API_KEY = os.environ.get("FMP_API_KEY") or os.environ.get("API_KEY") or ""
 
-TOP_N = int(os.environ.get("TOP_N", "100"))
+# The universe is built in two parts. The core is the largest companies, full
+# stop. Beyond it, taking the next N by market cap would just deepen whichever
+# sectors are already largest -- another twenty technology names before a second
+# utility -- so the expansion is chosen to spread across sectors instead.
+CORE_N = int(os.environ.get("TOP_N", "100"))
+BALANCED_N = int(os.environ.get("BALANCED_N", "100"))
+LOOKAHEAD = int(os.environ.get("LOOKAHEAD", "5"))
+TARGET_N = CORE_N + BALANCED_N
 HISTORY_DAYS = int(os.environ.get("HISTORY_DAYS", "760"))
 MAX_WORKERS = int(os.environ.get("MAX_WORKERS", "8"))
 
@@ -59,8 +69,10 @@ OUTPUT_PATH = os.environ.get("OUTPUT") or os.path.join(REPO_ROOT, "data", "snaps
 # Screen a deliberately oversized candidate pool: dual share classes, baby
 # bonds and preferreds all carry their parent's market cap and would otherwise
 # crowd genuine companies out of the top 100.
-CANDIDATE_POOL = max(TOP_N * 3, 300)
-UNIVERSE_RESERVE = 25
+CANDIDATE_POOL = max((TARGET_N + max(25, BALANCED_N)) * 2, 300)
+# Enough spare candidates that the balancer has something to choose between:
+# picking 100 from a remainder of 100 is not a choice, it is the whole list.
+UNIVERSE_RESERVE = max(25, BALANCED_N)
 MIN_MARKET_CAP = 5_000_000_000
 MIN_DOLLAR_VOLUME = 20_000_000  # average daily traded value
 
@@ -232,11 +244,11 @@ def build_universe() -> list[dict[str, Any]]:
             log(f"  dedupe: dropping {entry['symbol']} in favour of {incumbent['symbol']}")
 
     ranked = sorted(by_issuer.values(), key=lambda e: e["marketCap"], reverse=True)
-    # Carry a reserve past TOP_N so anything later rejected for thin history can
-    # be backfilled and the table still lands on a full hundred.
-    universe = ranked[:TOP_N + UNIVERSE_RESERVE]
-    log(f"universe: {len(ranked)} issuers deduped, taking top {TOP_N} "
-        f"(+{len(universe) - min(TOP_N, len(ranked))} reserve) from {universe[0]['symbol']}")
+    # Carry a reserve past the target so thin-history names can be replaced and
+    # the sector balancer has candidates to choose between.
+    universe = ranked[:TARGET_N + UNIVERSE_RESERVE]
+    log(f"universe: {len(ranked)} issuers deduped, carrying {len(universe)} candidates "
+        f"for a target of {TARGET_N} from {universe[0]['symbol']}")
     return universe
 
 
@@ -299,6 +311,34 @@ def align(series: dict[str, float], calendar: list[str]) -> list[float | None]:
         else:
             out.append(None)
     return out
+
+
+def select_balanced(candidates: list[dict[str, Any]], counts: dict[str, int],
+                    target: int, lookahead: int) -> list[dict[str, Any]]:
+    """Pick `target` names, spreading them across sectors.
+
+    Walking the remaining candidates in market-cap order, look at the next
+    `lookahead` and take the one whose sector is currently least represented,
+    breaking ties by market cap. Then count it and look again.
+
+    The lookahead is what keeps this honest. Choosing purely by smallest sector
+    would trawl the whole list for one more utility however far down it sat;
+    restricting the choice to the next few means a name still has to be roughly
+    next in line by size to be picked at all, and the balancing happens between
+    near-equals rather than across the entire tail.
+    """
+    chosen: list[dict[str, Any]] = []
+    pool = list(candidates)
+
+    while pool and len(chosen) < target:
+        window = pool[:lookahead]
+        # Least-represented sector wins; among equals, the largest company.
+        pick = min(window, key=lambda t: (counts.get(t["sector"], 0), -t["marketCap"]))
+        chosen.append(pick)
+        counts[pick["sector"]] = counts.get(pick["sector"], 0) + 1
+        pool.remove(pick)
+
+    return chosen
 
 
 # --------------------------------------------------------------------------
@@ -476,7 +516,7 @@ def validate(snapshot: dict[str, Any], previous: dict[str, Any] | None) -> list[
     tickers = snapshot.get("tickers") or []
     calendar = snapshot.get("dates") or []
 
-    minimum = max(int(TOP_N * 0.9), 1)
+    minimum = max(int(TARGET_N * 0.9), 1)
     if len(tickers) < minimum:
         errors.append(f"only {len(tickers)} tickers, need at least {minimum}")
     if len(calendar) < MIN_CALENDAR_SESSIONS:
@@ -546,10 +586,11 @@ def build_snapshot() -> dict[str, Any]:
     histories = load_history([e["symbol"] for e in universe])
     calendar = build_calendar(histories)
 
-    tickers: list[dict[str, Any]] = []
+    # Work out metrics for every candidate first, in market-cap order. Selecting
+    # before knowing which names survive would mean balancing sectors across
+    # tickers that then drop out for want of history.
+    eligible: list[dict[str, Any]] = []
     for entry in universe:
-        if len(tickers) >= TOP_N:
-            break
         series = histories.get(entry["symbol"]) or {}
         if not series:
             log(f"  skip {entry['symbol']}: no price history")
@@ -559,10 +600,25 @@ def build_snapshot() -> dict[str, Any]:
             log(f"  skip {entry['symbol']}: fewer than {MIN_TICKER_SESSIONS} sessions")
             continue
         metrics["cik"] = entry["cik"]
-        tickers.append(metrics)
+        eligible.append(metrics)
 
+    core = eligible[:CORE_N]
+    counts: dict[str, int] = {}
+    for ticker in core:
+        counts[ticker["sector"]] = counts.get(ticker["sector"], 0) + 1
+    log(f"core: {len(core)} by market cap, {len(counts)} sectors")
+
+    balanced = select_balanced(eligible[CORE_N:], counts, BALANCED_N, LOOKAHEAD)
+    if balanced:
+        log(f"balanced: {len(balanced)} added from {len(eligible) - len(core)} candidates "
+            f"with a lookahead of {LOOKAHEAD}")
+
+    tickers = core + balanced
     tickers.sort(key=lambda t: t["marketCap"], reverse=True)
     apply_rankings(tickers)
+
+    spread = sorted(counts.items(), key=lambda kv: -kv[1])
+    log("sectors: " + ", ".join(f"{name} {n}" for name, n in spread))
 
     latest = calendar[-1] if calendar else None
     return {
@@ -571,6 +627,13 @@ def build_snapshot() -> dict[str, Any]:
         "dataDate": latest,
         "source": "Financial Modeling Prep",
         "universeSize": len(tickers),
+        # How the universe was chosen, so a consumer can tell a pure market-cap
+        # table from one that has been spread across sectors.
+        "selection": {
+            "core": len(core),
+            "balanced": len(balanced),
+            "lookahead": LOOKAHEAD,
+        },
         "sessions": len(calendar),
         "dates": calendar,
         "tickers": tickers,
