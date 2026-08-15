@@ -8,3 +8,4 @@ __pycache__/
 node_modules/
 web/top300.html
 web/tech100.html
+web/browse.html
