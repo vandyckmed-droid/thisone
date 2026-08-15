@@ -1,0 +1,456 @@
+<title>Technology 100</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+  /* A deliberately single-world design: an instrument panel for reading one
+     sector, so it commits to the dark board rather than following the viewer's
+     theme. Every colour is painted explicitly for that reason. */
+  :root {
+    --board: #080C12;      /* substrate */
+    --panel: #0D141D;      /* raised panel */
+    --panel-hi: #131C27;
+    --trace: #1C2836;      /* hairline traces and rules */
+    --trace-soft: #141D28;
+    --copper: #D98A3D;     /* the one interface accent */
+    --copper-dim: #8A5A28;
+    --ink: #E4EDF5;
+    --dim: #93A6B8;
+    --faint: #5E7186;
+    --pos: #3FD5C3;        /* data semantics, separate from the accent */
+    --neg: #FF6B5E;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --gut: 15px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--board);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { appearance: none; background: none; border: none; padding: 0; margin: 0;
+           color: inherit; font: inherit; cursor: pointer; text-align: inherit; }
+  button:focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+  .shell { max-width: 720px; margin: 0 auto; padding-bottom: 40px; }
+
+  /* ------------------------------------------------------------- header */
+  .head { position: relative; overflow: hidden; border-bottom: 1px solid var(--trace); }
+  .head-traces { position: absolute; inset: 0; opacity: 0.5; pointer-events: none; }
+  .head-inner { position: relative; padding: 26px var(--gut) 20px; }
+  .eyebrow {
+    color: var(--copper); font-size: 10px; letter-spacing: 0.32em; text-transform: uppercase;
+  }
+  h1 {
+    margin: 10px 0 0; font-size: 30px; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase; text-wrap: balance;
+  }
+  .sub { color: var(--faint); font-family: var(--mono); font-size: 11px; margin-top: 9px; letter-spacing: 0.04em; }
+
+  .readout { display: flex; gap: 26px; margin-top: 20px; flex-wrap: wrap; }
+  .cell-label { color: var(--faint); font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; }
+  .cell-value { font-family: var(--mono); font-size: 19px; margin-top: 5px; font-variant-numeric: tabular-nums; }
+
+  /* ------------------------------------------------------------ controls */
+  .rail {
+    display: flex; gap: 8px; flex-wrap: wrap;
+    padding: 14px var(--gut); border-bottom: 1px solid var(--trace); background: var(--panel);
+  }
+  .sw {
+    display: flex; align-items: center; gap: 9px;
+    padding: 9px 13px; border: 1px solid var(--trace); border-radius: 3px;
+    background: var(--board); min-height: 44px;
+  }
+  .sw:hover { border-color: var(--copper-dim); }
+  .sw.on { border-color: var(--copper); background: rgba(217,138,61,0.09); }
+  /* A switch that reads as hardware: a pad that fills when the trace is live. */
+  .led { width: 9px; height: 9px; border-radius: 1px; background: var(--trace); box-shadow: inset 0 0 0 1px var(--trace); }
+  .sw.on .led { background: var(--copper); box-shadow: 0 0 7px rgba(217,138,61,0.75); }
+  .sw-text { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--dim); }
+  .sw.on .sw-text { color: var(--ink); }
+
+  .model {
+    padding: 11px var(--gut); border-bottom: 1px solid var(--trace);
+    color: var(--dim); font-family: var(--mono); font-size: 11px; letter-spacing: 0.03em;
+  }
+  .model .k { color: var(--copper); }
+
+  /* -------------------------------------------------------------- table */
+  .cols {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px var(--gut); border-bottom: 1px solid var(--trace);
+    color: var(--faint); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase;
+  }
+  .c-rank { width: 26px; flex-shrink: 0; }
+  .c-name { flex: 1; min-width: 0; }
+  .c-trace { width: 52px; flex-shrink: 0; }
+  .c-score { width: 82px; text-align: right; flex-shrink: 0; }
+
+  .row {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 11px var(--gut);
+    border-bottom: 1px solid var(--trace-soft);
+    border-left: 2px solid transparent;
+  }
+  .row:hover { background: var(--panel); }
+  .row.open { background: var(--panel); border-left-color: var(--copper); }
+  .rank { width: 26px; flex-shrink: 0; color: var(--faint); font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
+  /* Chip carrier: the logo sits on a pad, in keeping with the board. */
+  .chip {
+    width: 30px; height: 30px; flex-shrink: 0; border-radius: 3px;
+    background: var(--panel-hi); border: 1px solid var(--trace);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    color: var(--dim); font-family: var(--mono); font-size: 12px;
+  }
+  .chip img { width: 21px; height: 21px; object-fit: contain; }
+  .chip.full { border-color: transparent; background: none; }
+  .chip.full img { width: 100%; height: 100%; object-fit: cover; }
+  .id { flex: 1; min-width: 0; text-align: left; }
+  .tick { display: block; font-family: var(--mono); font-size: 14px; letter-spacing: 0.05em; }
+  .co {
+    display: block; color: var(--faint); font-size: 11px; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .spark { width: 52px; height: 22px; flex-shrink: 0; }
+  .score { width: 82px; text-align: right; flex-shrink: 0; font-family: var(--mono); font-size: 15px; font-variant-numeric: tabular-nums; }
+  .pos { color: var(--pos); } .neg { color: var(--neg); } .nil { color: var(--faint); }
+
+  /* ------------------------------------------------------------- detail */
+  .detail { padding: 4px var(--gut) 18px; background: var(--panel); border-bottom: 1px solid var(--trace); }
+  .grid { display: flex; flex-wrap: wrap; border-top: 1px solid var(--trace); padding-top: 12px; }
+  .stat { width: 33.33%; padding: 8px 10px 8px 0; }
+  .stat-l { color: var(--faint); font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; }
+  .stat-v { font-family: var(--mono); font-size: 14px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .decomp { margin-top: 12px; color: var(--dim); font-family: var(--mono); font-size: 11px; line-height: 1.7; }
+  .decomp .k { color: var(--copper); }
+
+  .note { color: var(--faint); font-size: 11px; line-height: 1.65; padding: 20px var(--gut) 0; }
+  .note b { color: var(--dim); font-weight: 600; }
+  .excluded { padding: 14px var(--gut) 0; color: var(--faint); font-family: var(--mono); font-size: 11px; line-height: 1.7; }
+</style>
+
+<div class="shell">
+  <div class="head">
+    <svg class="head-traces" aria-hidden="true" preserveAspectRatio="none" viewBox="0 0 720 190">
+      <g fill="none" stroke="#1C2836" stroke-width="1">
+        <path d="M0 34 H126 l16 16 H318 l14 -14 H720"/>
+        <path d="M0 78 H84 l18 18 H246 l16 -16 H452 l14 14 H720"/>
+        <path d="M0 126 H176 l16 -16 H392 l18 18 H720"/>
+        <path d="M0 166 H262 l14 -14 H520 l16 16 H720"/>
+      </g>
+      <g fill="#1C2836">
+        <circle cx="318" cy="34" r="3"/><circle cx="246" cy="96" r="3"/>
+        <circle cx="392" cy="110" r="3"/><circle cx="520" cy="152" r="3"/>
+        <circle cx="126" cy="34" r="3"/><circle cx="452" cy="80" r="3"/>
+      </g>
+    </svg>
+    <div class="head-inner">
+      <div class="eyebrow">Sector momentum · 12 minus 1</div>
+      <h1>Technology 100</h1>
+      <div class="sub" id="window-line"></div>
+      <div class="readout">
+        <div>
+          <div class="cell-label">Sector 12-1</div>
+          <div class="cell-value" id="sector-ret"></div>
+        </div>
+        <div>
+          <div class="cell-label">Ranked</div>
+          <div class="cell-value" id="ranked-n"></div>
+        </div>
+        <div>
+          <div class="cell-label">Positive</div>
+          <div class="cell-value" id="breadth"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="rail" id="rail">
+    <button class="sw" data-t="vol" aria-pressed="false">
+      <span class="led"></span><span class="sw-text">Volatility adjusted</span>
+    </button>
+    <button class="sw" data-t="market" aria-pressed="false">
+      <span class="led"></span><span class="sw-text">Market residual</span>
+    </button>
+    <button class="sw" data-t="sector" aria-pressed="false">
+      <span class="led"></span><span class="sw-text">Sector residual</span>
+    </button>
+  </div>
+
+  <div class="model" id="model"></div>
+
+  <div class="cols">
+    <span class="c-rank">#</span>
+    <span style="width:30px;flex-shrink:0"></span>
+    <span class="c-name">Ticker</span>
+    <span class="c-trace"></span>
+    <span class="c-score" id="score-head"></span>
+  </div>
+
+  <div id="list"></div>
+  <div class="excluded" id="excluded"></div>
+  <p class="note" id="method"></p>
+</div>
+
+<script>
+'use strict';
+const D = /*__DATA__*/;
+const LOGOS = /*__LOGOS__*/;
+const OPAQUE = new Set(/*__OPAQUE__*/);
+const BUILT = /*__BUILT__*/;
+
+/* ------------------------------------------------------------ the model
+   12 minus 1: the 252 trading days ending 21 days before the last close.
+   The most recent month is skipped because very short-term moves tend to
+   reverse rather than persist.
+
+   Betas are estimated on the 252 days immediately BEFORE that window, so no
+   part of the period being scored helps decide how much of itself was factor
+   driven. That costs some freshness and buys a clean separation.            */
+const SKIP = 21, WINDOW = 252, EST = 252;
+
+const N = D.dates.length;
+const lastRet = N - 1 - SKIP;
+const winStart = lastRet - WINDOW + 1;
+const estEnd = winStart - 1;
+const estStart = estEnd - EST + 1;
+
+const logRets = (h) => {
+  const r = new Array(N).fill(null);
+  for (let i = 1; i < N; i += 1) {
+    if (h[i] > 0 && h[i - 1] > 0) r[i] = Math.log(h[i] / h[i - 1]);
+  }
+  return r;
+};
+
+const market = logRets(D.market);
+const rets = new Map(D.tickers.map((t) => [t.s, logRets(t.h)]));
+
+/* A company counts only if it traded every session both windows need. The
+   rest are named at the foot of the page rather than ranked on a shorter
+   record than everyone else. */
+const complete = (r) => {
+  for (let i = estStart; i <= lastRet; i += 1) if (r[i] === null) return false;
+  return true;
+};
+const members = D.tickers.filter((t) => complete(rets.get(t.s)));
+const excluded = D.tickers.filter((t) => !complete(rets.get(t.s)));
+const M = members.length;
+
+/* The sector factor is the equal-weight mean of the members' daily returns.
+   Held as a running sum so that leaving one company out is a subtraction
+   rather than a re-aggregation — and leaving it out is the whole point: a
+   company measured against an index containing itself has part of its own
+   move cancelled, and the bigger it is the more of it disappears. */
+const sectorSum = new Array(N).fill(0);
+for (const t of members) {
+  const r = rets.get(t.s);
+  for (let i = estStart; i <= lastRet; i += 1) sectorSum[i] += r[i];
+}
+const sectorLoo = (symbol) => {
+  const own = rets.get(symbol);
+  const mine = members.some((t) => t.s === symbol);
+  const n = mine ? M - 1 : M;
+  const out = new Array(N).fill(0);
+  for (let i = estStart; i <= lastRet; i += 1) {
+    out[i] = (sectorSum[i] - (mine ? own[i] : 0)) / n;
+  }
+  return out;
+};
+// The sector's own 12-1 move, equal weight across every member.
+const sectorAll = (i) => sectorSum[i] / M;
+
+/** Ordinary least squares with an intercept, on one or two factors. */
+function betas(y, factors) {
+  const k = estEnd - estStart + 1;
+  const mean = (a) => { let s = 0; for (let i = estStart; i <= estEnd; i += 1) s += a[i]; return s / k; };
+  const my = mean(y);
+  if (!factors.length) return [];
+  if (factors.length === 1) {
+    const f = factors[0], mf = mean(f);
+    let sff = 0, sfy = 0;
+    for (let i = estStart; i <= estEnd; i += 1) {
+      const df = f[i] - mf; sff += df * df; sfy += df * (y[i] - my);
+    }
+    return sff > 0 ? [sfy / sff] : null;
+  }
+  const [a, b] = factors, ma = mean(a), mb = mean(b);
+  let saa = 0, sbb = 0, sab = 0, say = 0, sby = 0;
+  for (let i = estStart; i <= estEnd; i += 1) {
+    const da = a[i] - ma, db = b[i] - mb, dy = y[i] - my;
+    saa += da * da; sbb += db * db; sab += da * db; say += da * dy; sby += db * dy;
+  }
+  const det = saa * sbb - sab * sab;
+  // Guarded on shared variance rather than a raw determinant, which is scale
+  // dependent: two factors this alike cannot be told apart.
+  if (!(saa > 0 && sbb > 0) || (sab * sab) / (saa * sbb) > 0.999) return null;
+  return [(sbb * say - sab * sby) / det, (saa * sby - sab * say) / det];
+}
+
+const state = { vol: false, market: false, sector: false };
+
+function evaluate() {
+  const rows = [];
+  for (const t of members) {
+    const y = rets.get(t.s);
+    const factors = [];
+    if (state.market) factors.push(market);
+    if (state.sector) factors.push(sectorLoo(t.s));
+    const b = betas(y, factors);
+    if (b === null) continue;
+
+    const path = [];
+    let cum = 0, sum = 0;
+    const vals = [];
+    for (let i = winStart; i <= lastRet; i += 1) {
+      let e = y[i];
+      for (let f = 0; f < factors.length; f += 1) e -= b[f] * factors[f][i];
+      vals.push(e); sum += e; cum += e; path.push(cum);
+    }
+    const mean = sum / vals.length;
+    let sd = 0;
+    for (const v of vals) sd += (v - mean) * (v - mean);
+    sd = Math.sqrt(sd / vals.length);
+
+    rows.push({
+      t, path,
+      total: (Math.exp(sum) - 1) * 100,          // the (residual) 12-1 return
+      ratio: sd > 0 ? (mean / sd) * Math.sqrt(252) : null,
+      vol: sd * Math.sqrt(252) * 100,
+      bMarket: state.market ? b[0] : null,
+      bSector: state.sector ? b[state.market ? 1 : 0] : null,
+      raw: (Math.exp(y.slice(winStart, lastRet + 1).reduce((a, v) => a + v, 0)) - 1) * 100,
+    });
+  }
+  for (const r of rows) r.score = state.vol ? r.ratio : r.total;
+  rows.sort((a, b) => (b.score ?? -1e9) - (a.score ?? -1e9));
+  return rows;
+}
+
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const tone = (v) => (v === null || v === undefined ? 'nil' : v > 0 ? 'pos' : v < 0 ? 'neg' : 'nil');
+const pct = (v, d = 1) => (v === null || v === undefined ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(d)}%`);
+const num = (v, d = 2) => (v === null || v === undefined ? '—' : v.toFixed(d));
+
+function traceSvg(path, positive) {
+  if (path.length < 2) return '<svg class="spark"></svg>';
+  let lo = Infinity, hi = -Infinity;
+  for (const v of path) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const span = hi - lo || 1;
+  const W = 52, H = 22, pad = 2, usable = H - pad * 2;
+  const step = W / (path.length - 1);
+  const pts = path.map((v, i) =>
+    `${(i * step).toFixed(1)},${(pad + usable - ((v - lo) / span) * usable).toFixed(1)}`).join(' ');
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" aria-hidden="true">` +
+    `<polyline points="${pts}" fill="none" stroke="${positive ? 'var(--pos)' : 'var(--neg)'}" ` +
+    `stroke-width="1.3" stroke-linejoin="round" stroke-linecap="round"/></svg>`;
+}
+
+function logo(sym) {
+  const b64 = LOGOS[sym];
+  if (!b64) return `<span class="chip">${esc(sym.slice(0, 1))}</span>`;
+  return `<span class="chip${OPAQUE.has(sym) ? ' full' : ''}">` +
+    `<img src="data:image/webp;base64,${b64}" alt="" loading="lazy" decoding="async"></span>`;
+}
+
+let open = null;
+
+function describe() {
+  const legs = [];
+  if (state.market) legs.push('market');
+  if (state.sector) legs.push('sector');
+  const base = legs.length ? `${legs.join(' + ')} residual return` : '12-1 return';
+  return state.vol ? `${base}, volatility adjusted` : base;
+}
+
+function render() {
+  const rows = evaluate();
+
+  document.getElementById('score-head').textContent = state.vol ? 'Return / vol' : '12-1 return';
+  document.getElementById('model').innerHTML =
+    `Ranking by <span class="k">${esc(describe())}</span>` +
+    (state.sector ? ' · sector factor excludes the company being measured' : '');
+  document.getElementById('ranked-n').textContent = rows.length;
+  const up = rows.filter((r) => (r.score ?? 0) > 0).length;
+  document.getElementById('breadth').innerHTML =
+    `<span class="${up * 2 >= rows.length ? 'pos' : 'neg'}">${up}</span>` +
+    `<span class="nil" style="font-size:13px"> / ${rows.length}</span>`;
+
+  document.getElementById('list').innerHTML = rows.map((r, i) => {
+    const cls = tone(r.score);
+    const shown = state.vol ? num(r.ratio) : pct(r.total);
+    const body = `<button class="row${open === r.t.s ? ' open' : ''}" data-sym="${esc(r.t.s)}" ` +
+      `aria-expanded="${open === r.t.s}" aria-label="${esc(r.t.s)}, ${esc(r.t.n)}, rank ${i + 1}, ${shown}">` +
+      `<span class="rank">${i + 1}</span>${logo(r.t.s)}` +
+      `<span class="id"><span class="tick">${esc(r.t.s)}</span>` +
+      `<span class="co">${esc(r.t.n)}</span></span>` +
+      traceSvg(r.path, (r.score ?? 0) >= 0) +
+      `<span class="score ${cls}">${shown}</span></button>`;
+    if (open !== r.t.s) return body;
+    return body + `<div class="detail">
+      <div class="grid">
+        <div class="stat"><div class="stat-l">Raw 12-1</div><div class="stat-v ${tone(r.raw)}">${pct(r.raw)}</div></div>
+        <div class="stat"><div class="stat-l">After factors</div><div class="stat-v ${tone(r.total)}">${pct(r.total)}</div></div>
+        <div class="stat"><div class="stat-l">Volatility</div><div class="stat-v">${r.vol.toFixed(1)}%</div></div>
+        <div class="stat"><div class="stat-l">Return / vol</div><div class="stat-v ${tone(r.ratio)}">${num(r.ratio)}</div></div>
+        <div class="stat"><div class="stat-l">Market β</div><div class="stat-v">${num(r.bMarket)}</div></div>
+        <div class="stat"><div class="stat-l">Sector β</div><div class="stat-v">${num(r.bSector)}</div></div>
+      </div>
+      <div class="decomp">${
+        (r.bMarket === null && r.bSector === null)
+          ? 'No factors removed — this is the plain 12-1 return.'
+          : `Of a raw <span class="k">${pct(r.raw)}</span>, the factors explain ` +
+            `<span class="k">${pct(r.raw - r.total)}</span>, leaving ` +
+            `<span class="k">${pct(r.total)}</span> this company earned on its own.`
+      }</div>
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('rail').addEventListener('click', (e) => {
+  const sw = e.target.closest('.sw');
+  if (!sw) return;
+  const key = sw.dataset.t;
+  state[key] = !state[key];
+  sw.classList.toggle('on', state[key]);
+  sw.setAttribute('aria-pressed', String(state[key]));
+  render();
+});
+
+document.getElementById('list').addEventListener('click', (e) => {
+  const row = e.target.closest('.row');
+  if (!row) return;
+  open = open === row.dataset.sym ? null : row.dataset.sym;
+  render();
+});
+
+/* ---------------------------------------------------------------- boot */
+let secSum = 0;
+for (let i = winStart; i <= lastRet; i += 1) secSum += sectorAll(i);
+const secRet = (Math.exp(secSum) - 1) * 100;
+document.getElementById('sector-ret').innerHTML =
+  `<span class="${tone(secRet)}">${pct(secRet)}</span>`;
+document.getElementById('window-line').textContent =
+  `${D.dates[winStart]} → ${D.dates[lastRet]}  ·  252 sessions, last 21 skipped  ·  data ${D.dataDate}`;
+document.getElementById('excluded').innerHTML = excluded.length
+  ? `Not ranked — listed too recently to cover both windows: ` +
+    excluded.map((t) => `<span style="color:var(--dim)">${esc(t.s)}</span>`).join(', ') + '.'
+  : '';
+document.getElementById('method').innerHTML =
+  `<b>How this is built.</b> Every company's daily log returns over the 252 sessions ending ` +
+  `${D.dates[lastRet]} — a year, stopping 21 sessions short of the last close, because the most recent ` +
+  `month tends to reverse rather than persist. <b>Volatility adjusted</b> divides the average daily ` +
+  `return by its own standard deviation and annualises it, so a steady climb outranks a wild one that ` +
+  `arrived at the same place. <b>Market residual</b> removes what moved with the whole US market (VTI). ` +
+  `<b>Sector residual</b> removes what moved with the rest of technology — an equal-weight average of ` +
+  `the other ${M - 1} companies, never including the one being measured, since a company inside its own ` +
+  `benchmark has part of its own move cancelled out. Betas come from the 252 sessions <b>before</b> the ` +
+  `scoring window, so nothing in the period being judged decides how it is judged. Prices are ` +
+  `dividend-adjusted closes. Built ${BUILT}.`;
+
+render();
+</script>
