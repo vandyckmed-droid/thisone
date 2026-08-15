@@ -263,19 +263,29 @@ const sectorLoo = (symbol) => {
 // The sector's own 12-1 move, equal weight across every member.
 const sectorAll = (i) => sectorSum[i] / M;
 
-/** Ordinary least squares with an intercept, on one or two factors. */
+/**
+ * Ordinary least squares with an intercept, on one or two factors.
+ *
+ * Also returns `gamma`, the sector factor's own beta to the market. The two
+ * factors here correlate above 0.9 — a tech index is mostly the market wearing
+ * a hat — so the raw pair of coefficients splits the market exposure between
+ * them in a way that reads as nonsense: a semiconductor company comes out with
+ * a market beta near −1 because the sector leg is already carrying 1.4x of the
+ * market. Gamma lets the display put that back together into the beta a reader
+ * means by the word, without touching the fit.
+ */
 function betas(y, factors) {
   const k = estEnd - estStart + 1;
   const mean = (a) => { let s = 0; for (let i = estStart; i <= estEnd; i += 1) s += a[i]; return s / k; };
   const my = mean(y);
-  if (!factors.length) return [];
+  if (!factors.length) return { b: [], gamma: 0 };
   if (factors.length === 1) {
     const f = factors[0], mf = mean(f);
     let sff = 0, sfy = 0;
     for (let i = estStart; i <= estEnd; i += 1) {
       const df = f[i] - mf; sff += df * df; sfy += df * (y[i] - my);
     }
-    return sff > 0 ? [sfy / sff] : null;
+    return sff > 0 ? { b: [sfy / sff], gamma: 0 } : null;
   }
   const [a, b] = factors, ma = mean(a), mb = mean(b);
   let saa = 0, sbb = 0, sab = 0, say = 0, sby = 0;
@@ -287,7 +297,10 @@ function betas(y, factors) {
   // Guarded on shared variance rather than a raw determinant, which is scale
   // dependent: two factors this alike cannot be told apart.
   if (!(saa > 0 && sbb > 0) || (sab * sab) / (saa * sbb) > 0.999) return null;
-  return [(sbb * say - sab * sby) / det, (saa * sby - sab * say) / det];
+  return {
+    b: [(sbb * say - sab * sby) / det, (saa * sby - sab * say) / det],
+    gamma: sab / saa,
+  };
 }
 
 const state = { vol: false, market: false, sector: false };
@@ -299,8 +312,9 @@ function evaluate() {
     const factors = [];
     if (state.market) factors.push(market);
     if (state.sector) factors.push(sectorLoo(t.s));
-    const b = betas(y, factors);
-    if (b === null) continue;
+    const fit = betas(y, factors);
+    if (fit === null) continue;
+    const b = fit.b;
 
     const path = [];
     let cum = 0, sum = 0;
@@ -320,7 +334,12 @@ function evaluate() {
       total: (Math.exp(sum) - 1) * 100,          // the (residual) 12-1 return
       ratio: sd > 0 ? (mean / sd) * Math.sqrt(252) : null,
       vol: sd * Math.sqrt(252) * 100,
-      bMarket: state.market ? b[0] : null,
+      // Reported as the reader means them: the market beta is the company's
+      // whole exposure to the market, including the part arriving through the
+      // sector leg, and the sector beta is what the sector adds beyond it.
+      // Only the labels move — subtracting b1*m + b2*s is identical to
+      // subtracting (b1 + b2*gamma)*m + b2*(s - gamma*m), so nothing reranks.
+      bMarket: state.market ? b[0] + (state.sector ? b[1] * fit.gamma : 0) : null,
       bSector: state.sector ? b[state.market ? 1 : 0] : null,
       raw: (Math.exp(y.slice(winStart, lastRet + 1).reduce((a, v) => a + v, 0)) - 1) * 100,
     });
@@ -398,14 +417,18 @@ function render() {
         <div class="stat"><div class="stat-l">Volatility</div><div class="stat-v">${r.vol.toFixed(1)}%</div></div>
         <div class="stat"><div class="stat-l">Return / vol</div><div class="stat-v ${tone(r.ratio)}">${num(r.ratio)}</div></div>
         <div class="stat"><div class="stat-l">Market β</div><div class="stat-v">${num(r.bMarket)}</div></div>
-        <div class="stat"><div class="stat-l">Sector β</div><div class="stat-v">${num(r.bSector)}</div></div>
+        <div class="stat"><div class="stat-l">Sector β${r.bMarket !== null && r.bSector !== null ? ' extra' : ''}</div><div class="stat-v">${num(r.bSector)}</div></div>
       </div>
       <div class="decomp">${
         (r.bMarket === null && r.bSector === null)
           ? 'No factors removed — this is the plain 12-1 return.'
           : `Of a raw <span class="k">${pct(r.raw)}</span>, the factors explain ` +
             `<span class="k">${pct(r.raw - r.total)}</span>, leaving ` +
-            `<span class="k">${pct(r.total)}</span> this company earned on its own.`
+            `<span class="k">${pct(r.total)}</span> this company earned on its own.` +
+            (r.bMarket !== null && r.bSector !== null
+              ? ` Market β is the whole exposure to the market; sector β extra is what
+                  technology adds on top of it, since a tech index already carries the
+                  market with it.` : '')
       }</div>
     </div>`;
   }).join('');
